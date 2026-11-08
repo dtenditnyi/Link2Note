@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Секреты и данные
+.env
+.env.*
+!.env.example
+secrets/
+vault/
+*.db
+*.sqlite3
+
+# Claude Code: личные настройки (общие — в .claude/settings.json)
+.claude/settings.local.json
+CLAUDE.local.md
+
+# Graphify (если поставлю)
+graphify-out/
+
+# OS / IDE
+.DS_Store
+Thumbs.db

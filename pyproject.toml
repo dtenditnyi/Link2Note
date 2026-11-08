@@ -1,0 +1,34 @@
+[project]
+name = "link2note"
+version = "0.1.0"
+description = "Telegram bot: link -> AI digest -> Obsidian note"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "aiogram>=3",
+    "apscheduler>=3.10",
+    "google-genai",
+    "yt-dlp",
+    "trafilatura",
+    "httpx",
+    "jinja2",
+    "pydantic>=2",
+    "pydantic-settings>=2",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "ruff",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "ASYNC"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
