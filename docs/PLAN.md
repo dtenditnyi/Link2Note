@@ -161,14 +161,17 @@ from urllib.parse import parse_qs, urlparse
 
 URL_RE = re.compile(r"https?://[^\s<>\"]+")
 
+
 class Source(str, Enum):
     YOUTUBE = "youtube"
     INSTAGRAM = "instagram"
     TIKTOK = "tiktok"
-    VIDEO = "video"      # любые другие сайты, которые понимает yt-dlp
+    VIDEO = "video"  # любые другие сайты, которые понимает yt-dlp
     ARTICLE = "article"
 
+
 VIDEO_HOSTS = {"x.com", "twitter.com", "vimeo.com", "reddit.com", "facebook.com"}
+
 
 def classify(url: str) -> Source:
     host = urlparse(url).netloc.lower().removeprefix("www.").removeprefix("m.")
@@ -181,6 +184,7 @@ def classify(url: str) -> Source:
     if host in VIDEO_HOSTS:
         return Source.VIDEO
     return Source.ARTICLE
+
 
 def normalize(url: str) -> str:
     """Убираем мусор (?si=, utm_…), чтобы находить дубликаты.
@@ -200,35 +204,40 @@ def normalize(url: str) -> str:
 ```python
 from pydantic import BaseModel, Field
 
+
 class Shortcut(BaseModel):
     action: str
     windows: str = ""
     mac: str = ""
+
 
 class CodeBlock(BaseModel):
     language: str = "bash"
     code: str
     explanation: str = ""
 
+
 class Resource(BaseModel):
-    kind: str            # book | tool | site | video | course
+    kind: str  # book | tool | site | video | course
     name: str
     note: str = ""
+
 
 class Timestamp(BaseModel):
     seconds: int
     label: str
+
 
 class Digest(BaseModel):
     title: str = Field(description="Понятный заголовок на русском, до 80 символов")
     emoji: str = Field(description="Одно эмодзи по теме")
     tldr: str = Field(description="Суть в 1–2 предложениях")
     key_points: list[str]
-    steps: list[str] = []          # пошаговая инструкция, если есть
+    steps: list[str] = []  # пошаговая инструкция, если есть
     shortcuts: list[Shortcut] = []
     code: list[CodeBlock] = []
     resources: list[Resource] = []
-    action_items: list[str] = []   # что мне конкретно сделать
+    action_items: list[str] = []  # что мне конкретно сделать
     timestamps: list[Timestamp] = []
     tags: list[str] = Field(description="1–3 тега ТОЛЬКО из разрешённого списка")
     read_minutes: int
@@ -246,8 +255,24 @@ from digest.schema import Digest
 
 client = genai.Client(api_key=settings.gemini_api_key)
 
-ALLOWED_TAGS = ["dev", "ai", "homelab", "university", "romanian", "nuclear", "driving",
-                "cooking", "sport", "health", "finance", "planning", "games", "books", "personal", "obsidian"]
+ALLOWED_TAGS = [
+    "dev",
+    "ai",
+    "homelab",
+    "university",
+    "romanian",
+    "nuclear",
+    "driving",
+    "cooking",
+    "sport",
+    "health",
+    "finance",
+    "planning",
+    "games",
+    "books",
+    "personal",
+    "obsidian",
+]
 
 SYSTEM = f"""Ты — мой ассистент по конспектам. Сделай из материала заметку для Obsidian на русском.
 Правила:
@@ -259,6 +284,7 @@ SYSTEM = f"""Ты — мой ассистент по конспектам. Сд�
 - tags — 1–3 из списка: {", ".join(ALLOWED_TAGS)}.
 """
 
+
 def _config():
     return types.GenerateContentConfig(
         system_instruction=SYSTEM,
@@ -268,20 +294,24 @@ def _config():
         temperature=0.2,
     )
 
+
 async def digest_youtube(url: str, hint: str = "") -> Digest:
     resp = await client.aio.models.generate_content(
-        model=settings.gemini_model,                      # например "gemini-3.8-flash"
-        contents=types.Content(parts=[
-            types.Part(file_data=types.FileData(file_uri=url)),
-            types.Part(text=f"Сделай конспект этого видео. {hint}"),
-        ]),
+        model=settings.gemini_model,  # например "gemini-3.8-flash"
+        contents=types.Content(
+            parts=[
+                types.Part(file_data=types.FileData(file_uri=url)),
+                types.Part(text=f"Сделай конспект этого видео. {hint}"),
+            ]
+        ),
         config=_config(),
     )
     return _clean(resp.parsed)
 
+
 async def digest_video_file(path: str, hint: str = "") -> Digest:
     f = await client.aio.files.upload(file=path)
-    while f.state.name == "PROCESSING":                   # ждём обработку на стороне Google
+    while f.state.name == "PROCESSING":  # ждём обработку на стороне Google
         await asyncio.sleep(2)
         f = await client.aio.files.get(name=f.name)
     if f.state.name != "ACTIVE":
@@ -289,13 +319,16 @@ async def digest_video_file(path: str, hint: str = "") -> Digest:
     try:
         resp = await client.aio.models.generate_content(
             model=settings.gemini_model,
-            contents=[types.Part.from_uri(file_uri=f.uri, mime_type=f.mime_type),
-                      f"Сделай конспект этого видео. {hint}"],
+            contents=[
+                types.Part.from_uri(file_uri=f.uri, mime_type=f.mime_type),
+                f"Сделай конспект этого видео. {hint}",
+            ],
             config=_config(),
         )
         return _clean(resp.parsed)
     finally:
-        await client.aio.files.delete(name=f.name)        # не копим файлы в облаке
+        await client.aio.files.delete(name=f.name)  # не копим файлы в облаке
+
 
 async def digest_text(text: str, hint: str = "") -> Digest:
     resp = await client.aio.models.generate_content(
@@ -304,6 +337,7 @@ async def digest_text(text: str, hint: str = "") -> Digest:
         config=_config(),
     )
     return _clean(resp.parsed)
+
 
 def _clean(d: Digest) -> Digest:
     d.tags = [t for t in d.tags if t in ALLOWED_TAGS][:3] or ["personal"]
@@ -317,7 +351,8 @@ from pathlib import Path
 import httpx, trafilatura, yt_dlp
 from config import settings
 
-MAX_SECONDS = 60 * 60     # не берём видео длиннее часа
+MAX_SECONDS = 60 * 60  # не берём видео длиннее часа
+
 
 def _download(url: str, out_dir: str) -> tuple[str, dict]:
     opts = {
@@ -327,7 +362,7 @@ def _download(url: str, out_dir: str) -> tuple[str, dict]:
         "quiet": True,
         "max_filesize": 300 * 1024 * 1024,
     }
-    if settings.cookies_file:                     # нужно для Instagram
+    if settings.cookies_file:  # нужно для Instagram
         opts["cookiefile"] = settings.cookies_file
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)
@@ -336,16 +371,22 @@ def _download(url: str, out_dir: str) -> tuple[str, dict]:
         info = ydl.extract_info(url, download=True)
         return ydl.prepare_filename(info), info
 
+
 async def download_video(url: str):
     tmp = tempfile.mkdtemp(prefix="l2n_")
-    path, info = await asyncio.to_thread(_download, url, tmp)   # yt-dlp синхронный
-    meta = {"author": info.get("uploader", ""), "duration": info.get("duration") or 0,
-            "title": info.get("title", "")}
-    return path, meta, tmp                                       # tmp удаляем после обработки
+    path, info = await asyncio.to_thread(_download, url, tmp)  # yt-dlp синхронный
+    meta = {
+        "author": info.get("uploader", ""),
+        "duration": info.get("duration") or 0,
+        "title": info.get("title", ""),
+    }
+    return path, meta, tmp  # tmp удаляем после обработки
+
 
 async def fetch_article(url: str) -> str:
-    async with httpx.AsyncClient(follow_redirects=True, timeout=20,
-                                 headers={"User-Agent": "Mozilla/5.0"}) as c:
+    async with httpx.AsyncClient(
+        follow_redirects=True, timeout=20, headers={"User-Agent": "Mozilla/5.0"}
+    ) as c:
         html = (await c.get(url)).text
     text = trafilatura.extract(html, include_comments=False)
     if not text or len(text) < 300:
@@ -359,15 +400,21 @@ import asyncio, re
 from datetime import date
 from pathlib import Path
 
+
 class Vault:
     def __init__(self, repo_dir: str, folder: str = "03 - Resources/📥 Из ссылок"):
         self.repo = Path(repo_dir)
         self.dir = self.repo / folder
-        self.lock = asyncio.Lock()           # одна git-операция за раз
+        self.lock = asyncio.Lock()  # одна git-операция за раз
 
     async def _git(self, *args):
-        p = await asyncio.create_subprocess_exec("git", *args, cwd=self.repo,
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        p = await asyncio.create_subprocess_exec(
+            "git",
+            *args,
+            cwd=self.repo,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
         out, err = await p.communicate()
         if p.returncode:
             raise RuntimeError(err.decode())
@@ -378,7 +425,8 @@ class Vault:
         path = self.dir / f"{date.today():%Y-%m-%d} {safe}.md"
         i = 2
         while path.exists():
-            path = self.dir / f"{date.today():%Y-%m-%d} {safe} ({i}).md"; i += 1
+            path = self.dir / f"{date.today():%Y-%m-%d} {safe} ({i}).md"
+            i += 1
         return path
 
     async def save(self, title: str, markdown: str) -> str:
@@ -390,12 +438,13 @@ class Vault:
             rel = str(path.relative_to(self.repo))
             await self._git("add", rel)
             await self._git("commit", "-m", f"📥 Link2Note: {title}")
-            for attempt in range(3):                       # если я в этот момент тоже пушнул
+            for attempt in range(3):  # если я в этот момент тоже пушнул
                 try:
-                    await self._git("push"); break
+                    await self._git("push")
+                    break
                 except RuntimeError:
                     await self._git("pull", "--rebase")
-            return path.stem                              # имя заметки для ответа в Telegram
+            return path.stem  # имя заметки для ответа в Telegram
 ```
 
 ### 6.6 `handlers/links.py` — приём ссылок в Telegram
@@ -408,16 +457,19 @@ from digest.worker import queue, Job
 
 router = Router()
 
+
 @router.message(F.from_user.id == settings.owner_id, F.text | F.caption)
 async def on_message(msg: Message):
     text = msg.text or msg.caption or ""
     urls = URL_RE.findall(text)
     if not urls:
         return
-    hint = URL_RE.sub("", text).strip()       # всё, что я написал кроме ссылки, — подсказка ИИ
+    hint = URL_RE.sub("", text).strip()  # всё, что я написал кроме ссылки, — подсказка ИИ
     for url in urls:
         status = await msg.reply("⏳ Принял ссылку, разбираю…")
-        await queue.put(Job(url=url, hint=hint, chat_id=msg.chat.id, status_msg_id=status.message_id))
+        await queue.put(
+            Job(url=url, hint=hint, chat_id=msg.chat.id, status_msg_id=status.message_id)
+        )
 ```
 > [!warning] Безопасность
 > Фильтр `F.from_user.id == settings.owner_id` — бот **игнорирует всех, кроме меня**. Иначе любой, кто найдёт бота, потратит мой лимит Gemini.
@@ -429,19 +481,26 @@ from dataclasses import dataclass
 from digest import classifier as cl, fetchers, llm, render
 from digest.vault import Vault
 
+
 @dataclass
 class Job:
-    url: str; hint: str; chat_id: int; status_msg_id: int
+    url: str
+    hint: str
+    chat_id: int
+    status_msg_id: int
+
 
 queue: asyncio.Queue[Job] = asyncio.Queue()
+
 
 async def worker(bot, vault: Vault, db):
     while True:
         job = await queue.get()
         tmp = None
         try:
-            if (existing := await db.find_digest(cl.normalize(job.url))):
-                await _edit(bot, job, f"♻️ Уже есть: «{existing}»"); continue
+            if existing := await db.find_digest(cl.normalize(job.url)):
+                await _edit(bot, job, f"♻️ Уже есть: «{existing}»")
+                continue
             src = cl.classify(job.url)
             await _edit(bot, job, f"🧠 Смотрю {src.value}…")
             meta = {}
@@ -459,11 +518,15 @@ async def worker(bot, vault: Vault, db):
         except Exception as e:
             await _edit(bot, job, f"❌ Не получилось: {e}")
         finally:
-            if tmp: shutil.rmtree(tmp, ignore_errors=True)
+            if tmp:
+                shutil.rmtree(tmp, ignore_errors=True)
             queue.task_done()
 
+
 async def _edit(bot, job, text):
-    await bot.edit_message_text(text, chat_id=job.chat_id, message_id=job.status_msg_id, parse_mode="HTML")
+    await bot.edit_message_text(
+        text, chat_id=job.chat_id, message_id=job.status_msg_id, parse_mode="HTML"
+    )
 ```
 
 ### 6.8 `.env` и `docker-compose.yml`
@@ -503,8 +566,19 @@ services:
 - [ ] Создать папку `03 - Resources/📥 Из ссылок` ✅ (уже есть)
 - [ ] В VS Code: ветка `feature/link2note` в `assistant_bot`
 
+**Перенос assistant_bot** (спецификация: [specs/stage-0-migration.md](specs/stage-0-migration.md), проблемы: [MIGRATION.md](MIGRATION.md))
+- [x] `config.py`, `database.py` (UTC, повторы, статусы), `scheduler.py` (ретраи, пропущенные < 24 ч, повторы)
+- [x] Фильтр владельца (outer-middleware) — сообщения и кнопки
+- [x] Напоминания: создание / список / изменить / удалить, отложить и «Готово», ежедневные и еженедельные
+- [x] Относительное время текстом («через 20 мин», «завтра 9:00»)
+- [x] Голос: faster-whisper `small` (ленивая загрузка, вне event loop) → Gemini → подтверждение
+- [x] Текст без ссылок — тихий контекст к голосовому; ссылки оставлены для Link2Note
+- [x] Dockerfile (Python 3.12 + uv), docker-compose без ollama
+- [ ] Ручная проверка в Telegram и `docker compose build`
+- [ ] Удалить `legacy/` (отдельный коммит после ручной проверки)
+
 ### Этап 1 — MVP только YouTube (вечер)
-- [ ] `config.py`, `classifier.py`, `schema.py`, `llm.digest_youtube`
+- [ ] `classifier.py`, `schema.py`, `llm.digest_youtube`; дополнить `config.py` (vault, Gemini для конспектов)
 - [ ] Скрипт-проверка без Telegram: `python -m digest.cli https://youtu.be/...` → печатает Markdown
 - [ ] `render.py` + шаблон `note.md.j2`
 - [ ] `vault.py` → проверить на **тестовом** репозитории, потом на настоящем

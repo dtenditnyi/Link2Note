@@ -12,6 +12,7 @@ __pycache__/
 !.env.example
 secrets/
 vault/
+data/
 *.db
 *.sqlite3
 
