@@ -27,7 +27,7 @@ def test_defaults(monkeypatch):
     assert s.whisper_compute_type == "int8"
     assert s.voice_max_seconds == 120
     assert s.tz == "Europe/Bucharest"
-    assert s.gemini_model == "gemini-3.8-flash"
+    assert s.gemini_model == "gemini-3.5-flash-lite"
 
 
 def test_extra_env_vars_ignored(monkeypatch):
@@ -104,6 +104,6 @@ def test_c1_fallback_model(monkeypatch):
     monkeypatch.setenv("BOT_TOKEN", "1:x")
     monkeypatch.setenv("OWNER_ID", "1")
     monkeypatch.delenv("GEMINI_FALLBACK_MODEL", raising=False)
-    assert Settings(_env_file=None).gemini_fallback_model == "gemini-3.7-flash"
+    assert Settings(_env_file=None).gemini_fallback_model == "gemini-3.1-flash-lite"
     monkeypatch.setenv("GEMINI_FALLBACK_MODEL", "")
     assert Settings(_env_file=None).gemini_fallback_model == ""

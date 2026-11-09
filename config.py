@@ -18,9 +18,10 @@ class Settings(BaseSettings):
     owner_id: int
 
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-3.8-flash"
+    # Free tier (09.11.2026): у Lite 500 запросов/сутки и 15/мин, у gemini-3.8-flash — 20/сутки.
+    gemini_model: str = "gemini-3.5-flash-lite"
     # Одна попытка на запасной модели при 429/5xx; пусто или как основная — выключено.
-    gemini_fallback_model: str = "gemini-3.7-flash"
+    gemini_fallback_model: str = "gemini-3.1-flash-lite"
 
     tz: str = "Europe/Bucharest"
     db_path: Path = Path("data/link2note.db")
