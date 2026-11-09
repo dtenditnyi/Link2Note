@@ -175,6 +175,8 @@ def extract_time(text: str, now: datetime) -> tuple[datetime, str] | None:
 
 def _local_parts(dt: datetime, tz: tzinfo | None) -> tuple[date, time, tzinfo]:
     zone = tz or dt.tzinfo
+    if zone is None:  # иначе astimezone(None) молча взял бы системный пояс
+        raise ValueError("datetime must be timezone-aware (or pass tz)")
     local = dt.astimezone(zone)
     return local.date(), local.time(), zone
 

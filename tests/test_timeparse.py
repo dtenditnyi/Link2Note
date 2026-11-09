@@ -160,3 +160,14 @@ def test_format_dt_local():
     from datetime import UTC
 
     assert format_dt(datetime(2026, 11, 8, 10, 0, tzinfo=UTC), TZ) == "08.11.2026 12:00"
+
+
+@pytest.mark.parametrize("func", ["shift", "next_occurrence"])
+def test_naive_datetime_without_tz_rejected(func):
+    """Наивное время без tz — ошибка, а не молчаливый системный часовой пояс."""
+    naive = datetime(2026, 11, 8, 9, 0)
+    with pytest.raises(ValueError, match="aware"):
+        if func == "shift":
+            shift(naive, Repeat.DAILY, 1)
+        else:
+            next_occurrence(naive, Repeat.DAILY, datetime(2026, 11, 8, 10, 0, tzinfo=TZ))
