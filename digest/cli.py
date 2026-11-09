@@ -55,10 +55,13 @@ async def run(
 
 async def _main(argv: list[str]) -> int:
     from config import get_settings
+    from digest.fetchers import cookies_warning
     from digest.llm import DigestLLM
     from digest.vault import Vault
 
     settings = get_settings()
+    if warning := cookies_warning(settings.cookies_file):
+        print(f"⚠️ {warning}", file=sys.stderr)
     vault = None
     if settings.vault_repo:
         candidate = Vault(

@@ -5,11 +5,15 @@ import httpx
 import pytest
 from yt_dlp.utils import DownloadError
 
+from digest import fetchers
 from digest.errors import DigestError
 from digest.fetchers import (
     Article,
+    RawPage,
     VideoMeta,
     VideoOptions,
+    clean_author,
+    cookies_warning,
     download_video,
     fetch_article,
     youtube_meta,
@@ -204,14 +208,14 @@ async def test_y2_cookies_copied_original_untouched(tmp_path):
     assert original.read_text() == before
 
 
-async def test_y2_missing_cookies_file_is_clear_error(tmp_path):
-    with pytest.raises(DigestError, match="COOKIES_FILE"):
-        await download_video(
-            REEL,
-            tmp_path,
-            VideoOptions(cookies_file=tmp_path / "nope.txt"),
-            ydl_factory=_factory(),
-        )
+async def test_c1_missing_cookies_file_downloads_without_cookies(tmp_path, caplog):
+    missing = tmp_path / "secrets" / "nope.txt"
+    path, _ = await download_video(
+        REEL, tmp_path, VideoOptions(cookies_file=missing), ydl_factory=_factory()
+    )
+    assert path.exists()
+    assert "cookiefile" not in FakeYDL.instances[0].opts
+    assert "nope.txt" in caplog.text  # предупреждение в лог
 
 
 LOGIN = DownloadError(
@@ -234,6 +238,26 @@ async def test_y3_login_required_with_cookies_says_stale(tmp_path):
         await download_video(
             REEL, out, VideoOptions(cookies_file=cookies), ydl_factory=_factory(error=LOGIN)
         )
+
+
+async def test_c2_missing_cookies_file_and_login_required(tmp_path):
+    missing = tmp_path / "secrets" / "nope.txt"
+    with pytest.raises(DigestError) as exc:
+        await download_video(
+            REEL, tmp_path, VideoOptions(cookies_file=missing), ydl_factory=_factory(error=LOGIN)
+        )
+    text = str(exc.value)
+    assert "COOKIES_FILE" in text and "nope.txt" in text and "нет" in text
+    assert "устарели" not in text
+
+
+def test_c3_cookies_warning(tmp_path):
+    present = tmp_path / "c.txt"
+    present.write_text("# Netscape HTTP Cookie File" + chr(10))
+    assert cookies_warning(None) is None
+    assert cookies_warning(present) is None
+    warning = cookies_warning(tmp_path / "nope.txt")
+    assert warning is not None and "nope.txt" in warning and "COOKIES_FILE" in warning
 
 
 async def test_y3_no_video(tmp_path):
@@ -290,11 +314,89 @@ async def test_a1_article_ok():
     assert art.sitename == "Example Blog"
 
 
-@pytest.mark.parametrize("status", [401, 402, 403])
-async def test_a2_closed(status):
+REAL_IMPERSONATED_GET = fetchers._impersonated_get
+
+
+@pytest.fixture(autouse=True)
+def no_real_impersonation(monkeypatch):
+    """Повтор через curl-cffi в тестах никогда не ходит в сеть."""
+
+    async def forbidden(url):
+        raise AssertionError(f"неожиданный повтор через curl-cffi: {url}")
+
+    monkeypatch.setattr(fetchers, "_impersonated_get", forbidden)
+
+
+def _fallback(monkeypatch, result):
+    calls: list[str] = []
+
+    async def fake(url):
+        calls.append(url)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    monkeypatch.setattr(fetchers, "_impersonated_get", fake)
+    return calls
+
+
+@pytest.mark.parametrize("status", [401, 402])
+async def test_h2_paywall_or_login_no_retry(status):
     async with _page(status=status) as c:
-        with pytest.raises(DigestError, match="закрыт"):
+        with pytest.raises(DigestError, match="закрыт.*(вход|paywall)"):
             await fetch_article(ARTICLE_URL, c)
+
+
+@pytest.mark.parametrize("status", [403, 429])
+async def test_h1_antibot_retried_with_impersonation(monkeypatch, status):
+    calls = _fallback(monkeypatch, RawPage(200, "text/html; charset=utf-8", HTML.encode()))
+    async with _page(status=status) as c:
+        art = await fetch_article(ARTICLE_URL, c)
+    assert calls == [ARTICLE_URL]
+    assert "Мультикурсор" in art.text
+
+
+@pytest.mark.parametrize("status", [403, 429])
+async def test_h2_still_blocked_after_retry(monkeypatch, status):
+    _fallback(monkeypatch, RawPage(status, "text/html", b""))
+    async with _page(status=403) as c:
+        with pytest.raises(DigestError) as exc:
+            await fetch_article(ARTICLE_URL, c)
+    text = str(exc.value)
+    assert "блокирует автоматическое чтение" in text and str(status) in text
+    assert "вход" not in text and "paywall" not in text
+
+
+async def test_h2_retry_gets_paywall(monkeypatch):
+    _fallback(monkeypatch, RawPage(402, "text/html", b""))
+    async with _page(status=403) as c:
+        with pytest.raises(DigestError, match="paywall"):
+            await fetch_article(ARTICLE_URL, c)
+
+
+async def test_h3_retry_network_error(monkeypatch):
+    from curl_cffi.requests.exceptions import RequestException
+
+    _fallback(monkeypatch, RequestException("boom"))
+    async with _page(status=403) as c:
+        with pytest.raises(DigestError, match="(?i)не смог открыть"):
+            await fetch_article(ARTICLE_URL, c)
+
+
+async def test_h3_retry_result_still_checked(monkeypatch):
+    _fallback(monkeypatch, RawPage(200, "application/pdf", b"%PDF"))
+    async with _page(status=403) as c:
+        with pytest.raises(DigestError, match="веб-страниц"):
+            await fetch_article(ARTICLE_URL, c)
+
+
+def test_h3_body_limit_shared():
+    async def chunks():
+        for _ in range(6):
+            yield b"x" * (1024 * 1024)
+
+    with pytest.raises(DigestError, match="больш"):
+        asyncio.run(fetchers._read_limited(chunks(), None))
 
 
 async def test_a2_not_found():
@@ -376,3 +478,143 @@ async def test_a_user_agent_is_browser_like():
         await fetch_article(ARTICLE_URL, c)
     assert seen["ua"].startswith("Mozilla/5.0")
     assert "@" not in seen["ua"]
+
+
+# --- Мусорные авторы (U1, U2) -------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "junk",
+    [
+        "Authority control databases",
+        "Navigation menu",
+        "© 2026 Example Inc. All rights reserved",
+        "Подписаться на рассылку",
+        "Главное меню",
+        "https://example.com/author",
+        "editor@example.com",
+        "Very Long Author Name That Clearly Is Not A Person But A Sentence From Footer",
+        "One two three four five six seven",
+        "Example Blog",  # совпадает с названием сайта
+    ],
+)
+def test_u1_junk_author_dropped(junk):
+    assert clean_author(junk, sitename="Example Blog") == ""
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["Иван Петров", "John Smith, Jane Doe", "Fireship", "Yehudi Menuhin", "Shareef Ali", "Sharon"],
+)
+def test_u1_real_author_kept(name):
+    assert clean_author(name, sitename="Example Blog") == name
+
+
+async def test_u2_junk_author_replaced_by_site():
+    html = HTML.replace('content="Иван Петров"', 'content="Authority control databases"')
+    async with _page(body=html) as c:
+        art = await fetch_article(ARTICLE_URL, c)
+    assert art.author == ""
+    assert art.sitename == "Example Blog"
+
+
+async def test_u2_no_sitename_uses_domain():
+    html = HTML.replace('<meta property="og:site_name" content="Example Blog">', "")
+    html = html.replace("<title>Советы по VS Code | Example Blog</title>", "<title>Советы</title>")
+    html = html.replace('content="Иван Петров"', 'content="Navigation menu"')
+    async with _page(body=html) as c:
+        art = await fetch_article("https://www.blog.example.com/x", c)
+    assert art.author == ""
+    assert art.sitename == "blog.example.com"
+
+
+# --- Повтор через curl-cffi: настоящий _impersonated_get, AsyncSession подменена ----------
+
+
+class _FakeCurlResp:
+    def __init__(self, status, ctype, chunks):
+        self.status_code = status
+        self.headers = {"content-type": ctype}
+        self._chunks = chunks
+        self.quit_now = asyncio.Event()
+        self.sent = 0
+
+    async def aiter_content(self):
+        for chunk in self._chunks:
+            if self.quit_now.is_set():
+                return
+            self.sent += 1
+            yield chunk
+
+
+class _FakeSession:
+    last: "_FakeSession | None" = None
+
+    def __init__(self, resp, **kw):
+        self.resp = resp
+        self.kw = kw
+        self.stream_kw: dict = {}
+        _FakeSession.last = self
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    def stream(self, method, url, **kw):
+        self.stream_kw = kw
+        session = self
+
+        class _Ctx:
+            async def __aenter__(self):
+                return session.resp
+
+            async def __aexit__(self, *exc):
+                return False
+
+        return _Ctx()
+
+
+def _fake_curl(monkeypatch, resp):
+    import curl_cffi.requests
+
+    monkeypatch.setattr(curl_cffi.requests, "AsyncSession", lambda **kw: _FakeSession(resp, **kw))
+
+
+async def test_h1_impersonated_get_reads_page(monkeypatch):
+    resp = _FakeCurlResp(200, "text/html; charset=utf-8", [HTML.encode()])
+    _fake_curl(monkeypatch, resp)
+    page = await REAL_IMPERSONATED_GET(ARTICLE_URL)
+    assert page == RawPage(200, "text/html; charset=utf-8", HTML.encode())
+    assert _FakeSession.last is not None
+    assert _FakeSession.last.kw["impersonate"] == "chrome"
+    assert _FakeSession.last.stream_kw["allow_redirects"] is True
+    assert resp.quit_now.is_set()  # передача остановлена при выходе
+
+
+async def test_h3_impersonated_get_stops_transfer_when_too_big(monkeypatch):
+    """Ревью: без quit_now curl докачивал бы всё тело в память после ошибки «слишком большая»."""
+    resp = _FakeCurlResp(200, "text/html", [b"x" * (1024 * 1024)] * 20)
+    _fake_curl(monkeypatch, resp)
+    with pytest.raises(DigestError, match="больш"):
+        await REAL_IMPERSONATED_GET(ARTICLE_URL)
+    assert resp.quit_now.is_set()
+
+
+async def test_h3_impersonated_get_error_status_stops_transfer(monkeypatch):
+    resp = _FakeCurlResp(403, "text/html", [b"blocked"])
+    _fake_curl(monkeypatch, resp)
+    page = await REAL_IMPERSONATED_GET(ARTICLE_URL)
+    assert page.status == 403 and page.body == b""
+    assert resp.quit_now.is_set()
+    assert resp.sent == 0  # тело ошибки не читаем
+
+
+async def test_h3_retry_low_level_curl_error(monkeypatch):
+    from curl_cffi import CurlError
+
+    _fallback(monkeypatch, CurlError("setopt failed"))
+    async with _page(status=403) as c:
+        with pytest.raises(DigestError, match="(?i)не смог открыть"):
+            await fetch_article(ARTICLE_URL, c)

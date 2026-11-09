@@ -13,7 +13,7 @@ from aiogram.enums import ParseMode
 
 from config import get_settings
 from database import Database
-from digest.fetchers import VideoOptions
+from digest.fetchers import VideoOptions, cookies_warning
 from digest.llm import DigestLLM
 from digest.vault import Vault
 from digest.worker import Job, restore_jobs, run_worker
@@ -103,6 +103,8 @@ async def main() -> None:
     async with httpx.AsyncClient(timeout=15) as http:
         worker = None
         if vault is not None:
+            if warning := cookies_warning(settings.cookies_file):
+                log.warning(warning)
             restored = await restore_jobs(db, link_queue, bot)
             if restored:
                 log.info("Очередь Link2Note: после перезапуска вернул задач: %d", restored)
@@ -133,6 +135,14 @@ async def main() -> None:
                     await worker
 
 
+def run() -> None:
+    """Ctrl+C: воркер отменён в finally (задача остаётся в очереди) — выходим без трейсбека."""
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        log.info("Бот остановлен")
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, stream=sys.stdout)
-    asyncio.run(main())
+    run()

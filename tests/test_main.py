@@ -233,3 +233,18 @@ async def test_trigger_text_in_fsm_state_not_intercepted(dp, fake_bot):
     )
     # Сценарий изменения не понял время целиком и остался в своём состоянии.
     assert await dp.fsm.storage.get_state(_key()) == EditReminder.time.state
+
+
+def test_k1_ctrl_c_exits_quietly(monkeypatch, caplog):
+    """Ctrl+C: одна строка в логе, без трейсбека KeyboardInterrupt."""
+    import logging
+
+    import main as main_module
+
+    async def interrupted():
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(main_module, "main", interrupted)
+    caplog.set_level(logging.INFO)
+    main_module.run()  # не должно бросить KeyboardInterrupt
+    assert "Бот остановлен" in caplog.text
