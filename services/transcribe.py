@@ -52,3 +52,24 @@ class Transcriber:
 
     async def transcribe(self, path: Path) -> str:
         return await asyncio.to_thread(self._transcribe_sync, path)
+
+    def _timed_sync(self, path: Path, language: str | None) -> str:
+        segments, _info = self._load().transcribe(
+            str(path), beam_size=5, language=language, vad_filter=True
+        )
+        lines = []
+        for s in segments:
+            if text := s.text.strip():
+                lines.append(f"[{_ts(int(s.start))}] {text}")
+        return "\n".join(lines)
+
+    async def transcribe_timed(self, path: Path, language: str | None = None) -> str:
+        """Звук видео → строки «[MM:SS] текст». language=None — автоопределение (видео бывают
+        на любом языке, в отличие от голосовых)."""
+        return await asyncio.to_thread(self._timed_sync, path, language)
+
+
+def _ts(seconds: int) -> str:
+    h, rest = divmod(max(0, seconds), 3600)
+    m, s = divmod(rest, 60)
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"

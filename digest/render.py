@@ -87,8 +87,12 @@ def to_markdown(
     date_added: date,
     duration: int = 0,
     model: str = "",
+    via: str = "",
 ) -> str:
-    """duration — секунды (0 — неизвестна, не выводится). У статьи таймкодов не бывает."""
+    """duration — секунды (0 — неизвестна, не выводится). У статьи таймкодов не бывает.
+
+    via="whisper" — конспект сделан по расшифровке звука (Gemini не открыл видео).
+    """
     vid = youtube_id(url)
     timestamps = []
     for t in [] if source == "article" else d.timestamps:
@@ -117,6 +121,7 @@ def to_markdown(
         author=_oneline(author),
         duration=format_ts(duration) if duration > 0 else "",
         model=_oneline(model),
+        via=_oneline(via),
         date_added=date_added,
         tldr_lines=[line.strip() for line in d.tldr.strip().splitlines() if line.strip()],
         code=code,

@@ -10,7 +10,7 @@ from google import genai
 from google.genai import errors, types
 from pydantic import ValidationError
 
-from digest.errors import DigestError, GeminiBusy
+from digest.errors import DigestError, GeminiBusy, VideoUnreadable
 from digest.schema import Digest
 from services.gemini_errors import is_daily_quota, is_overloaded
 
@@ -57,6 +57,12 @@ SYSTEM = f"""Ты — мой ассистент по конспектам. Сд�
 - tags — 1–3 тега по главной теме материала, только из списка:
 {_TAG_LINES}
 """
+
+TRANSCRIPT_PROMPT = (
+    "Сделай конспект видео по расшифровке его звука. Экрана ты не видишь: горячие клавиши, "
+    "команды и код пиши, только если их проговорили. Строки начинаются с меток [MM:SS] "
+    "(или [H:MM:SS]) — время от начала видео; по ним заполни timestamps (в секундах)."
+)
 
 # Встроенный ретрай SDK: лимиты free tier (429) и перегрузка (503).
 RETRY_STATUS = [429, 503]  # 500/502/504 часто постоянные — не множим запросы
@@ -132,8 +138,13 @@ class DigestLLM:
             ),
         )
 
-    async def _generate(self, parts: list[types.Part], what: str) -> Digested:
-        """Основная модель (с повторами SDK); при 429/5xx — одна попытка на запасной."""
+    async def _generate(
+        self, parts: list[types.Part], what: str, *, video: bool = False
+    ) -> Digested:
+        """Основная модель (с повторами SDK); при 429/5xx — одна попытка на запасной.
+
+        video=True: ошибка «не открыл» (400/403/404) — VideoUnreadable, есть путь через Whisper.
+        """
         contents = types.Content(role="user", parts=parts)
         models = [self.model] + ([self.fallback_model] if self.fallback_model else [])
         failures: list[errors.APIError] = []
@@ -144,7 +155,8 @@ class DigestLLM:
                 )
             except errors.APIError as err:
                 if not is_overloaded(err):
-                    raise DigestError(
+                    error = VideoUnreadable if video else DigestError
+                    raise error(
                         f"Gemini не смог открыть {what}: {err.message or err.code}"
                     ) from err
                 failures.append(err)
@@ -176,7 +188,9 @@ class DigestLLM:
             types.Part(file_data=types.FileData(file_uri=url)),
             types.Part(text=_with_hint("Сделай конспект этого видео.", hint)),
         ]
-        return await self._generate(parts, "видео (unlisted/private или слишком длинное?)")
+        return await self._generate(
+            parts, "видео (unlisted/private или слишком длинное?)", video=True
+        )
 
     async def digest_video_file(self, path: Path, mime_type: str, hint: str = "") -> Digested:
         """Видео-файл → Files API → конспект. Файл в облаке удаляется в любом случае."""
@@ -194,7 +208,7 @@ class DigestLLM:
                 types.Part(file_data=types.FileData(file_uri=f.uri, mime_type=f.mime_type)),
                 types.Part(text=_with_hint("Сделай конспект этого видео.", hint)),
             ]
-            return await self._generate(parts, "видео")
+            return await self._generate(parts, "видео", video=True)
         finally:
             try:
                 await files.delete(name=name)
@@ -205,15 +219,20 @@ class DigestLLM:
         deadline = time.monotonic() + self.processing_timeout_s
         while f.state == types.FileState.PROCESSING:
             if time.monotonic() >= deadline:
-                raise DigestError("Gemini слишком долго обрабатывает видео — попробуй позже.")
+                raise VideoUnreadable("Gemini слишком долго обрабатывает видео — попробуй позже.")
             await asyncio.sleep(self.poll_interval_s)
             f = await self._get_client().aio.files.get(name=name)
         if f.state != types.FileState.ACTIVE:
-            raise DigestError(f"Gemini не смог обработать видео (состояние {f.state}).")
+            raise VideoUnreadable(f"Gemini не смог обработать видео (состояние {f.state}).")
         return f
 
-    async def digest_text(self, text: str, title: str = "", hint: str = "") -> Digested:
-        prompt = _with_hint("Сделай конспект этой статьи.", hint)
+    async def digest_text(
+        self, text: str, title: str = "", hint: str = "", *, transcript: bool = False
+    ) -> Digested:
+        """transcript=True — текст это расшифровка звука видео (Whisper) со строками [MM:SS]."""
+        prompt = _with_hint(
+            TRANSCRIPT_PROMPT if transcript else "Сделай конспект этой статьи.", hint
+        )
         if title.strip():
             prompt += f"\nЗаголовок: {title.strip()}"
         prompt += f"\n\n{text[:MAX_TEXT_CHARS]}"

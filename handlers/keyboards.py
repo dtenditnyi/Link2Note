@@ -102,3 +102,36 @@ def voice_confirm(mid: int) -> InlineKeyboardMarkup:
             ]
         ]
     )
+
+
+# --- Link2Note: кнопки под конспектом (этап 3) --------------------------------------------
+
+
+class NoteCb(CallbackData, prefix="note"):
+    action: str  # more | read | del | del_yes | del_no
+    id: int  # notes.id
+
+
+def note_actions(
+    note_id: int, *, detailed: bool = False, read: bool = False
+) -> InlineKeyboardMarkup:
+    """«Подробнее» — один раз на заметку, «Прочитано» — пока не отмечена."""
+    top = []
+    if not detailed:
+        top.append(_button("🔁 Подробнее", NoteCb(action="more", id=note_id)))
+    if not read:
+        top.append(_button("✅ Прочитано", NoteCb(action="read", id=note_id)))
+    rows = [top] if top else []
+    rows.append([_button("🗑 Удалить", NoteCb(action="del", id=note_id))])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def note_delete_confirm(note_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                _button("✅ Да, удалить", NoteCb(action="del_yes", id=note_id)),
+                _button("↩️ Нет", NoteCb(action="del_no", id=note_id)),
+            ]
+        ]
+    )

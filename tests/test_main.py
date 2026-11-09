@@ -34,12 +34,13 @@ def dp(tmp_path_factory):
         voice_max_seconds=120,
         link_queue=asyncio.Queue(),
         vault_ready=True,
+        vault=MagicMock(),
     )
 
 
 def test_routers_order_context_last(dp):
     names = [r.name for r in dp.sub_routers]
-    assert names == ["basic", "reminders", "voice", "links", "context"]
+    assert names == ["basic", "reminders", "voice", "links", "notes", "context"]
 
 
 def test_workflow_data_injected(dp):
@@ -55,6 +56,7 @@ def test_workflow_data_injected(dp):
         "voice_max_seconds",
         "link_queue",
         "vault_ready",
+        "vault",
     ):
         assert key in dp.workflow_data
     assert dp.workflow_data["clock"]().tzinfo is not None

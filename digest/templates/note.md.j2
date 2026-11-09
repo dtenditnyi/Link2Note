@@ -15,6 +15,9 @@ confidence: {{ d.confidence }}
 {% if model %}
 model: {{ model }}
 {% endif %}
+{% if via %}
+via: {{ via }}
+{% endif %}
 tags: [{{ d.tags | join(", ") }}]
 ---
 # {{ d.emoji | oneline }} {{ d.title | oneline }}

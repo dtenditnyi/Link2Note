@@ -9,7 +9,7 @@ import logging
 import re
 import shutil
 from collections.abc import AsyncIterator, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -28,6 +28,8 @@ OEMBED_URL = "https://www.youtube.com/oembed"
 
 # Сначала готовый файл со звуком (слияние дорожек требует ffmpeg), потом — слияние.
 VIDEO_FORMAT = "b[height<=720]/bv*[height<=720]+ba/b"
+# Запасной путь через Whisper: только звук (m4a/webm читает PyAV, ffmpeg не нужен).
+AUDIO_FORMAT = "ba/b"
 ARTICLE_MAX_BYTES = 5 * 1024 * 1024
 ARTICLE_MIN_CHARS = 300
 ARTICLE_TIMEOUT_S = 30
@@ -125,10 +127,14 @@ def _download_error(err: DownloadError, cookies: Path | None, has_cookies: bool)
 
 
 def _download_sync(
-    url: str, out_dir: Path, opts: VideoOptions, ydl_factory: Callable[..., Any]
+    url: str,
+    out_dir: Path,
+    opts: VideoOptions,
+    ydl_factory: Callable[..., Any],
+    fmt: str = VIDEO_FORMAT,
 ) -> tuple[Path, VideoMeta]:
     params: dict[str, Any] = {
-        "format": VIDEO_FORMAT,
+        "format": fmt,
         "merge_output_format": "mp4",
         "outtmpl": str(out_dir / "%(id)s.%(ext)s"),
         "noplaylist": True,
@@ -192,6 +198,21 @@ async def download_video(
 ) -> tuple[Path, VideoMeta]:
     """Скачивает видео в out_dir (папку удаляет вызывающий). yt-dlp синхронный — в потоке."""
     return await asyncio.to_thread(_download_sync, url, Path(out_dir), opts, ydl_factory)
+
+
+async def download_audio(
+    url: str,
+    out_dir: Path,
+    opts: VideoOptions,
+    *,
+    max_seconds: int,
+    ydl_factory: Callable[..., Any] = yt_dlp.YoutubeDL,
+) -> tuple[Path, VideoMeta]:
+    """Только звук — для расшифровки Whisper. Длиннее max_seconds — ошибка до скачивания."""
+    opts = replace(opts, max_seconds=min(opts.max_seconds, max_seconds))
+    return await asyncio.to_thread(
+        _download_sync, url, Path(out_dir), opts, ydl_factory, AUDIO_FORMAT
+    )
 
 
 # --- Статьи ------------------------------------------------------------------------------

@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     video_max_seconds: int = 3600
     video_max_mb: int = 300
 
+    # Этап 3: Gemini не открыл видео → звук → Whisper (CPU); длиннее — не расшифровываем.
+    whisper_fallback_max_seconds: int = 1800
+    weekly_digest: bool = True  # вс 18:00 — список непрочитанных конспектов
+
     @field_validator("vault_repo", "cookies_file", mode="before")
     @classmethod
     def _empty_is_none(cls, value):

@@ -16,8 +16,9 @@ from database import Database
 from digest.fetchers import VideoOptions, cookies_warning
 from digest.llm import DigestLLM
 from digest.vault import Vault
+from digest.weekly import schedule_weekly
 from digest.worker import Job, Postponer, restore_jobs, run_worker
-from handlers import basic, context, links, voice
+from handlers import basic, context, links, notes, voice
 from handlers import reminders as reminders_handlers
 from handlers.middlewares import setup_owner_filter
 from scheduler import ReminderScheduler
@@ -41,6 +42,7 @@ def build_dispatcher(
     voice_max_seconds: int,
     link_queue: asyncio.Queue[Job],
     vault_ready: bool,
+    vault: Vault | None = None,
 ) -> Dispatcher:
     dp = Dispatcher(
         db=db,
@@ -54,11 +56,18 @@ def build_dispatcher(
         voice_max_seconds=voice_max_seconds,
         link_queue=link_queue,
         vault_ready=vault_ready,
+        vault=vault,
     )
     setup_owner_filter(dp, owner_id)
-    # Порядок важен: команды → FSM напоминаний → голос → ссылки → «текст как контекст» последним.
+    # Порядок важен: команды → FSM напоминаний → голос → ссылки → кнопки конспектов и /unread →
+    # «текст как контекст» последним.
     dp.include_routers(
-        basic.router, reminders_handlers.router, voice.router, links.router, context.router
+        basic.router,
+        reminders_handlers.router,
+        voice.router,
+        links.router,
+        notes.router,
+        context.router,
     )
     return dp
 
@@ -85,13 +94,15 @@ async def main() -> None:
 
     bot = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     scheduler = ReminderScheduler(bot, db, tz)
+    # Один Whisper на голосовые и запасной путь конспектов (модель грузится один раз).
+    transcriber = Transcriber(
+        settings.whisper_model, settings.whisper_device, settings.whisper_compute_type
+    )
     dp = build_dispatcher(
         owner_id=settings.owner_id,
         db=db,
         reminders=scheduler,
-        transcriber=Transcriber(
-            settings.whisper_model, settings.whisper_device, settings.whisper_compute_type
-        ),
+        transcriber=transcriber,
         intent=IntentParser(
             settings.gemini_api_key,
             settings.gemini_model,
@@ -103,6 +114,7 @@ async def main() -> None:
         voice_max_seconds=settings.voice_max_seconds,
         link_queue=link_queue,
         vault_ready=vault is not None,
+        vault=vault,
     )
 
     clock = lambda: datetime.now(tz)  # noqa: E731
@@ -135,8 +147,14 @@ async def main() -> None:
                     ),
                     clock=clock,
                     postponer=postponer,
+                    transcriber=transcriber,
+                    whisper_max_seconds=settings.whisper_fallback_max_seconds,
                 )
             )
+            if settings.weekly_digest:
+                schedule_weekly(
+                    scheduler.scheduler, bot=bot, vault=vault, chat_id=settings.owner_id
+                )
         try:
             await scheduler.start()
             await bot.set_my_commands(basic.COMMANDS)

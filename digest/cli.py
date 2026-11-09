@@ -15,7 +15,7 @@ import httpx
 
 from digest.errors import DigestError
 from digest.fetchers import VideoOptions
-from digest.pipeline import DigestModel, make_note
+from digest.pipeline import WHISPER_MAX_SECONDS, DigestModel, Transcribes, make_note
 from digest.worker import NoteStore
 
 
@@ -35,13 +35,24 @@ async def run(
     vault: NoteStore | None,
     today: date,
     video: VideoOptions | None = None,
+    transcriber: Transcribes | None = None,
+    whisper_max_seconds: int = WHISPER_MAX_SECONDS,
 ) -> int:
     args = _parser().parse_args(argv)
     if args.save and vault is None:
         print("❌ --save: VAULT_REPO не настроен или это не git-репозиторий", file=sys.stderr)
         return 2
     try:
-        note = await make_note(args.url, args.hint, llm=llm, http=http, today=today, video=video)
+        note = await make_note(
+            args.url,
+            args.hint,
+            llm=llm,
+            http=http,
+            today=today,
+            video=video,
+            transcriber=transcriber,
+            whisper_max_seconds=whisper_max_seconds,
+        )
         print(note.markdown, end="")
         if args.save:
             assert vault is not None
@@ -58,6 +69,7 @@ async def _main(argv: list[str]) -> int:
     from digest.fetchers import cookies_warning
     from digest.llm import DigestLLM
     from digest.vault import Vault
+    from services.transcribe import Transcriber
 
     settings = get_settings()
     if warning := cookies_warning(settings.cookies_file):
@@ -87,6 +99,10 @@ async def _main(argv: list[str]) -> int:
             video=VideoOptions(
                 settings.cookies_file, settings.video_max_seconds, settings.video_max_mb
             ),
+            transcriber=Transcriber(
+                settings.whisper_model, settings.whisper_device, settings.whisper_compute_type
+            ),
+            whisper_max_seconds=settings.whisper_fallback_max_seconds,
         )
 
 

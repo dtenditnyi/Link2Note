@@ -5,6 +5,9 @@
 
 Gemini перегружен (обе модели) → задача откладывается (5/15/30 мин, дневная квота — до сброса)
 и возвращается в очередь по таймеру Postponer, а после перезапуска — по run_after из базы.
+
+Под готовым конспектом (и под «♻️ Уже есть») — кнопки 🔁 Подробнее / ✅ Прочитано / 🗑 Удалить.
+Задача с note_id («Подробнее») перезаписывает ту же заметку вместо новой.
 """
 
 import asyncio
@@ -22,10 +25,17 @@ import httpx
 
 from config import QUOTA_RESET_TZ
 from database import Database
-from digest.classifier import classify
+from digest.classifier import canonical_youtube, classify, youtube_id
 from digest.errors import DigestError, GeminiBusy, VaultError
 from digest.fetchers import VideoOptions
-from digest.pipeline import DigestModel, DuplicateError, make_note
+from digest.pipeline import (
+    WHISPER_MAX_SECONDS,
+    DigestModel,
+    DuplicateError,
+    Transcribes,
+    make_note,
+)
+from handlers import keyboards as kb
 
 log = logging.getLogger(__name__)
 
@@ -46,6 +56,7 @@ class Job:
     id: int | None = None  # строка в link_jobs; None — задача не из БД
     defers: int = 0  # сколько раз откладывали из-за перегрузки Gemini
     quota_waits: int = 0  # сколько раз ждали сброса дневной квоты
+    note_id: int | None = None  # «Подробнее»: перезаписать эту заметку (notes.id)
 
 
 class Later(Protocol):
@@ -132,13 +143,24 @@ def _postpone(
 class NoteStore(Protocol):
     async def save(self, title: str, markdown: str, day: date) -> str: ...
 
+    async def replace(self, name: str, url: str, markdown: str, *, skip=()) -> str: ...
 
-async def _edit(bot, job: Job, text: str) -> None:
+
+async def _edit(bot, job: Job, text: str, markup=None) -> None:
     """Редактируем статус-сообщение; если не вышло (удалено и т.п.) — только лог."""
     try:
-        await bot.edit_message_text(text=text, chat_id=job.chat_id, message_id=job.status_msg_id)
+        await bot.edit_message_text(
+            text=text, chat_id=job.chat_id, message_id=job.status_msg_id, reply_markup=markup
+        )
     except Exception:
         log.exception("Не смог обновить статус для %s", job.url)
+
+
+def _summary(d, name: str) -> str:
+    return (
+        f"{escape(d.emoji)} <b>{escape(d.title)}</b>\n\n{escape(d.tldr)}\n\n"
+        f"📝 Заметка: «{escape(name)}»"
+    )
 
 
 async def process_job(
@@ -153,6 +175,8 @@ async def process_job(
     video: VideoOptions | None = None,
     clock: Callable[[], datetime] = _utc_now,
     postponer: Later | None = None,
+    transcriber: Transcribes | None = None,
+    whisper_max_seconds: int = WHISPER_MAX_SECONDS,
 ) -> None:
     start = time.monotonic()
     status = "failed"
@@ -162,6 +186,12 @@ async def process_job(
 
         async def progress(text: str) -> None:
             await _edit(bot, job, text)
+
+        target = None
+        if job.note_id is not None:
+            target = db.get_note(job.note_id)
+            if target is None:  # удалили, пока задача ждала в очереди — квоту не тратим
+                raise DigestError("заметка уже удалена — подробный конспект не делаю.")
 
         day = today()
         note = await make_note(
@@ -173,23 +203,48 @@ async def process_job(
             video=video,
             known=None if job.force else db.find_digest,
             progress=progress,
+            transcriber=transcriber,
+            whisper_max_seconds=whisper_max_seconds,
         )
         d = note.digest
+        if target is not None:
+            warning = ""
+            try:
+                name = await vault.replace(
+                    target.note_name,
+                    target.url,
+                    note.markdown,
+                    skip=db.other_note_names(target.id),
+                )
+            except VaultError as err:
+                if not err.note_name:  # не закоммичено — как обычная ошибка
+                    raise
+                name = err.note_name  # закоммичено локально, уйдёт со следующим push
+                warning = f"\n\n⚠️ {escape(str(err))}"
+            if name != target.note_name:
+                db.rename_note(target.id, name)
+            db.mark_read(target.id, False)  # новый текст — снова status: unread
+            status = "done"
+            await _edit(
+                bot,
+                job,
+                "🔁 Подробный конспект готов\n\n" + _summary(d, name) + warning,
+                kb.note_actions(target.id, detailed=True, read=False),
+            )
+            return
+
         source = classify(job.url).value
         try:
             name = await vault.save(d.title, note.markdown, day)
         except VaultError as err:
             if err.note_name:  # закоммичена локально — уйдёт со следующим push
-                db.save_digest(note.keys, err.note_name, job.url, source)
+                note_id = db.add_note(err.note_name, note.url or job.url, source, job.chat_id)
+                db.save_digest(note.keys, err.note_name, job.url, source, note_id=note_id)
             raise
-        db.save_digest(note.keys, name, job.url, source)
+        note_id = db.add_note(name, note.url or job.url, source, job.chat_id)
+        db.save_digest(note.keys, name, job.url, source, note_id=note_id)
         status = "done"
-        await _edit(
-            bot,
-            job,
-            f"{escape(d.emoji)} <b>{escape(d.title)}</b>\n\n{escape(d.tldr)}\n\n"
-            f"📝 Заметка: «{escape(name)}»",
-        )
+        await _edit(bot, job, _summary(d, name), kb.note_actions(note_id))
     except asyncio.CancelledError:
         # Остановка бота посреди задачи — не падение: вернётся после старта (restore_jobs).
         status = "pending"
@@ -204,7 +259,14 @@ async def process_job(
             await _edit(bot, job, text)
     except DuplicateError as err:
         status = "done"
-        await _edit(bot, job, f"♻️ Уже есть: «{escape(err.note_name)}»")
+        markup = None
+        vid = youtube_id(job.url)
+        note_url = canonical_youtube(vid) if vid else job.url  # как в самой заметке
+        if (note_id := db.note_id_for(err.keys, job.chat_id, url=note_url)) is not None and (
+            row := db.get_note(note_id)
+        ) is not None:
+            markup = kb.note_actions(row.id, detailed=row.detailed, read=row.read)
+        await _edit(bot, job, f"♻️ Уже есть: «{escape(err.note_name)}»", markup)
     except DigestError as err:
         log.info("Конспект не получился для %s: %s", job.url, err)
         await _edit(bot, job, f"❌ Не получилось: {escape(str(err))}")
@@ -212,6 +274,8 @@ async def process_job(
         log.exception("Ошибка при обработке %s", job.url)
         await _edit(bot, job, "❌ Не получилось: внутренняя ошибка, подробности в логах.")
     finally:
+        if job.note_id is not None and status == "failed":
+            db.mark_detailed(job.note_id, False)  # не вышло — кнопку «Подробнее» можно снова
         if job.id is not None and status != "postponed":
             if status == "pending":
                 db.release_job(job.id)
@@ -246,9 +310,12 @@ async def restore_jobs(
             id=row.id,
             defers=row.defers,
             quota_waits=row.quota_waits,
+            note_id=row.note_id,
         )
         if row.attempts >= MAX_ATTEMPTS:
             db.finish_job(row.id, "failed")
+            if row.note_id is not None:
+                db.mark_detailed(row.note_id, False)
             log.error("Задача %s (%s) падала %d раз — снята", row.id, row.url, row.attempts)
             await _edit(
                 bot,
