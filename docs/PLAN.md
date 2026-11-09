@@ -581,18 +581,20 @@ services:
 
 _Клон хранилища и deploy key (пункты выше) нужны для `vault.py` — сделать в начале этапа 1._
 
-### Этап 1 — MVP только YouTube (вечер)
-- [ ] `classifier.py`, `schema.py`, `llm.digest_youtube`; дополнить `config.py` (vault, Gemini для конспектов)
-- [ ] Скрипт-проверка без Telegram: `python -m digest.cli https://youtu.be/...` → печатает Markdown
-- [ ] `render.py` + шаблон `note.md.j2`
-- [ ] `vault.py` → проверить на **тестовом** репозитории, потом на настоящем
-- [ ] `handlers/links.py` + `worker.py` → первая ссылка из Telegram превращается в заметку 🎉
+### Этап 1 — MVP только YouTube (спецификация: [specs/stage-1-youtube-mvp.md](specs/stage-1-youtube-mvp.md))
+- [x] `classifier.py`, `schema.py`, `llm.digest_youtube`; дополнить `config.py` (vault, Gemini для конспектов)
+- [x] Скрипт-проверка без Telegram: `python -m digest.cli https://youtu.be/...` → печатает Markdown
+- [x] `render.py` + шаблон `note.md.j2`
+- [x] `vault.py` → проверен на **тестовом** репозитории (`../vault-test`); [ ] на настоящем — при деплое
+- [x] `handlers/links.py` + `worker.py` (очередь в памяти)
+- [ ] Ручная проверка: живой прогон CLI и первая ссылка из Telegram превращается в заметку 🎉
+- Сверх плана: метаданные через YouTube oEmbed (автор + ранняя проверка «видео приватное»), ссылки из `text_link`/подписей, таймаут git и Gemini, понятные ошибки 429/400
 
 ### Этап 2 — все источники
 - [ ] `yt-dlp` для Instagram/TikTok (+ экспорт `cookies.txt`)
 - [ ] Статьи через `trafilatura`
 - [ ] Дубликаты (таблица `digests` в SQLite)
-- [ ] Подсказка-комментарий к ссылке
+- [x] Подсказка-комментарий к ссылке — сделано на этапе 1 (у пересланных постов не берётся)
 
 ### Этап 3 — удобство
 - [ ] Inline-кнопки: 🔁 Подробнее (повтор с `hint="максимально подробно"`), ✅ Прочитано (меняет `status: read`), 🗑 Удалить

@@ -59,3 +59,30 @@ def test_invalid_tz_fails_fast(monkeypatch):
     monkeypatch.setenv("TZ", "EET-2EEST,M3.5.0/3,M10.5.0/4")
     with pytest.raises(ValidationError, match="IANA"):
         Settings(_env_file=None)
+
+
+def test_stage1_vault_and_digest_defaults(monkeypatch):
+    monkeypatch.setenv("BOT_TOKEN", "1:x")
+    monkeypatch.setenv("OWNER_ID", "1")
+    monkeypatch.delenv("VAULT_REPO", raising=False)
+    s = Settings(_env_file=None)
+    assert s.vault_repo is None
+    assert s.vault_folder == "03 - Resources/📥 Из ссылок"
+    assert s.git_author_name == "Link2Note"
+    assert s.git_author_email == "link2note@localhost"
+    assert s.gemini_timeout_s == 300
+
+
+def test_vault_repo_from_env(monkeypatch):
+    monkeypatch.setenv("BOT_TOKEN", "1:x")
+    monkeypatch.setenv("OWNER_ID", "1")
+    monkeypatch.setenv("VAULT_REPO", "/vault")
+    assert Settings(_env_file=None).vault_repo == Path("/vault")
+
+
+def test_empty_vault_repo_is_none(monkeypatch):
+    """VAULT_REPO= (пусто в .env) — значит «не настроено», а не текущая папка."""
+    monkeypatch.setenv("BOT_TOKEN", "1:x")
+    monkeypatch.setenv("OWNER_ID", "1")
+    monkeypatch.setenv("VAULT_REPO", "")
+    assert Settings(_env_file=None).vault_repo is None

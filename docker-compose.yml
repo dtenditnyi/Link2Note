@@ -1,5 +1,10 @@
 # Linux-хост: перед первым запуском `mkdir -p data && sudo chown 1000:1000 data`
 # (иначе Docker создаст ./data от root и SQLite не откроет базу).
+# Link2Note: ./vault — git clone хранилища (тоже chown 1000:1000), ./secrets — deploy key.
+# Ключ на хосте: `sudo chown 1000:1000 secrets/deploy_key && chmod 600 secrets/deploy_key`
+# (том :ro — внутри контейнера права не поправить, а ssh не берёт ключ с широкими правами). В .env:
+#   VAULT_REPO=/vault
+#   GIT_SSH_COMMAND=ssh -i /secrets/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new
 services:
   bot:
     build: .
@@ -9,6 +14,8 @@ services:
     volumes:
       - ./data:/app/data                                   # SQLite (DB_PATH=data/link2note.db)
       - whisper_cache:/home/botuser/.cache/huggingface      # модель Whisper скачивается один раз
+      - ./vault:/vault                                     # клон хранилища Obsidian
+      - ./secrets:/secrets:ro                              # deploy key, только чтение
 
 volumes:
   whisper_cache:

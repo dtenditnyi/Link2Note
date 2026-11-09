@@ -1,0 +1,81 @@
+---
+type: digest
+status: unread
+source: {{ source }}
+url: {{ url | yq }}
+{% if author %}
+author: {{ author | yq }}
+{% endif %}
+date_added: {{ date_added.isoformat() }}
+read_minutes: {{ d.read_minutes }}
+confidence: {{ d.confidence }}
+tags: [{{ d.tags | join(", ") }}]
+---
+# {{ d.emoji | oneline }} {{ d.title | oneline }}
+
+> [!tldr] Суть за 10 секунд
+{% for line in tldr_lines %}
+> {{ line }}
+{% endfor %}
+
+## 🔑 Главное
+{% for point in d.key_points %}
+- {{ point | oneline }}
+{% endfor %}
+{% if d.shortcuts %}
+
+## ⌨️ Горячие клавиши
+| Действие | Windows | macOS |
+|---|---|---|
+{% for s in d.shortcuts %}
+| {{ s.action | cell }} | {{ s.windows | keycell }} | {{ s.mac | keycell }} |
+{% endfor %}
+{% endif %}
+{% if d.steps %}
+
+## 🪜 Пошагово
+{% for step in d.steps %}
+{{ loop.index }}. {{ step | oneline }}
+{% endfor %}
+{% endif %}
+{% if code %}
+
+## 💻 Команды и код
+{% for c in code %}
+{% if not loop.first %}
+
+{% endif %}
+{% if c.explanation %}
+{{ c.explanation }}
+
+{% endif %}
+{{ c.fence }}{{ c.language }}
+{{ c.body }}
+{{ c.fence }}
+{% endfor %}
+{% endif %}
+{% if d.resources %}
+
+## 📚 Упомянутые ресурсы
+{% for r in d.resources %}
+- {{ r.kind | resource_icon }} **{{ r.name | oneline }}**{% if r.note %} — {{ r.note | oneline }}{% endif %}
+
+{% endfor %}
+{% endif %}
+{% if d.action_items %}
+
+## ✅ Что сделать
+{% for item in d.action_items %}
+- [ ] {{ item | oneline }}
+{% endfor %}
+{% endif %}
+{% if timestamps %}
+
+## ⏱️ Таймкоды
+{% for t in timestamps %}
+- {{ t.text }} — {{ t.label }}
+{% endfor %}
+{% endif %}
+
+---
+🔗 Источник: [{{ source_label }}]({{ url }})

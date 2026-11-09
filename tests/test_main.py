@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock
 
@@ -5,6 +6,7 @@ import pytest
 from aiogram import Bot
 from aiogram.client.session.base import BaseSession
 from aiogram.fsm.storage.base import StorageKey
+from aiogram.methods import SendMessage
 from aiogram.types import CallbackQuery, Chat, Message, Update, User
 
 from database import Database
@@ -30,12 +32,14 @@ def dp(tmp_path_factory):
         memory=ContextMemory(ttl=timedelta(minutes=15)),
         tz=TZ,
         voice_max_seconds=120,
+        link_queue=asyncio.Queue(),
+        vault_ready=True,
     )
 
 
 def test_routers_order_context_last(dp):
     names = [r.name for r in dp.sub_routers]
-    assert names == ["basic", "reminders", "voice", "context"]
+    assert names == ["basic", "reminders", "voice", "links", "context"]
 
 
 def test_workflow_data_injected(dp):
@@ -49,6 +53,8 @@ def test_workflow_data_injected(dp):
         "tz",
         "clock",
         "voice_max_seconds",
+        "link_queue",
+        "vault_ready",
     ):
         assert key in dp.workflow_data
     assert dp.workflow_data["clock"]().tzinfo is not None
@@ -76,6 +82,13 @@ class FakeSession(BaseSession):
     # Сигнатура задана BaseSession aiogram — имя timeout менять нельзя.
     async def make_request(self, bot, method, timeout=None):  # noqa: ASYNC109
         self.calls.append(method)
+        if isinstance(method, SendMessage):
+            return Message(
+                message_id=900 + len(self.calls),
+                date=datetime.now(),
+                chat=Chat(id=method.chat_id, type="private"),
+                text=method.text,
+            )
         return None
 
     async def stream_content(self, *args, **kwargs):  # pragma: no cover
@@ -121,12 +134,49 @@ async def test_plain_text_goes_to_context_silently(dp, fake_bot):
     assert fake_bot.session.calls == []
 
 
-async def test_link_not_stored_through_dispatcher(dp, fake_bot):
-    """A3 на собранном боте: ссылка не попадает в контекст и не получает ответа."""
+def _drain(dp) -> list:
+    queue = dp.workflow_data["link_queue"]
+    jobs = []
+    while not queue.empty():
+        jobs.append(queue.get_nowait())
+    return jobs
+
+
+async def test_link_goes_to_links_not_context(dp, fake_bot):
+    """A3 + T1 на собранном боте: ссылка не попадает в контекст, а встаёт в очередь Link2Note.
+
+    На этапе 0 ссылка оставалась без ответа (заглушка до этапа 1) — теперь её забирает links.
+    """
     await _reset(dp)
-    await dp.feed_update(fake_bot, _message_update(OWNER, "https://youtu.be/abc"))
+    _drain(dp)
+    await dp.feed_update(
+        fake_bot, _message_update(OWNER, "https://youtu.be/dQw4w9WgXcQ упор на хоткеи")
+    )
     assert _memory(dp) is None
+    jobs = _drain(dp)
+    assert [(j.url, j.hint) for j in jobs] == [("https://youtu.be/dQw4w9WgXcQ", "упор на хоткеи")]
+    assert [type(m).__name__ for m in fake_bot.session.calls] == ["SendMessage"]
+
+
+async def test_stranger_link_ignored(dp, fake_bot):
+    """T5: ссылка от чужого — ни вызова API, ни задачи в очереди."""
+    await _reset(dp)
+    _drain(dp)
+    await dp.feed_update(fake_bot, _message_update(STRANGER, "https://youtu.be/dQw4w9WgXcQ"))
     assert fake_bot.session.calls == []
+    assert _drain(dp) == []
+
+
+async def test_reminder_with_link_stays_reminder(dp, fake_bot):
+    """«напомни … ссылка» — это напоминание (reminders раньше links), в очередь не попадает."""
+    await _reset(dp)
+    _drain(dp)
+    await dp.feed_update(
+        fake_bot,
+        _message_update(OWNER, "через 2 минуты напомни посмотреть https://youtu.be/dQw4w9WgXcQ"),
+    )
+    assert await dp.fsm.storage.get_state(_key()) == CreateReminder.repeat.state
+    assert _drain(dp) == []
 
 
 async def test_stale_repeat_button_through_dispatcher(dp, fake_bot):

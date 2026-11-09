@@ -25,6 +25,18 @@ class Settings(BaseSettings):
     whisper_compute_type: str = "int8"
     voice_max_seconds: int = 120
 
+    # Link2Note: конспекты и хранилище
+    gemini_timeout_s: int = 300
+    vault_repo: Path | None = None  # клон хранилища Obsidian; пусто — сохранять некуда
+    vault_folder: str = "03 - Resources/📥 Из ссылок"
+    git_author_name: str = "Link2Note"
+    git_author_email: str = "link2note@localhost"
+
+    @field_validator("vault_repo", mode="before")
+    @classmethod
+    def _empty_is_none(cls, value):
+        return None if isinstance(value, str) and not value.strip() else value
+
     @field_validator("tz")
     @classmethod
     def _valid_tz(cls, value: str) -> str:
