@@ -5,7 +5,7 @@ disable-model-invocation: true
 argument-hint: <номер этапа>
 ---
 Работаем над **этапом $ARGUMENTS** из @docs/PLAN.md (раздел «План работ по шагам»).
-Этап 0 — перенос старого бота: дополнительно читай @docs/MIGRATION.md и код в `legacy/assistant_bot/` (только для справки).
+Этап 0 (перенос старого бота) завершён; его история — в docs/MIGRATION.md и docs/specs/stage-0-migration.md.
 
 Проводи этап строго по @docs/WORKFLOW.md, не пропуская шагов:
 

@@ -558,13 +558,13 @@ services:
 
 ## 7. 🧑‍💻 План работ по шагам
 
-### Этап 0 — подготовка (30 мин)
-- [ ] Получить **Gemini API key** в Google AI Studio
-- [ ] Создать **нового бота** у @BotFather (или переиспользовать токен маминого)
+### Этап 0 — подготовка и перенос assistant_bot ✅ (09.11.2026)
+- [x] Получить **Gemini API key** в Google AI Studio
+- [x] Создать **нового бота** у @BotFather (или переиспользовать токен маминого)
 - [ ] На сервере: `git clone` репозитория хранилища (`Lol4ik0/myObsidian`) в `~/assistant_bot/vault`
 - [ ] Создать **deploy key** с правом записи *только* на репозиторий хранилища (GitHub → repo → Settings → Deploy keys) — безопаснее, чем личный токен
-- [ ] Создать папку `03 - Resources/📥 Из ссылок` ✅ (уже есть)
-- [ ] В VS Code: ветка `feature/link2note` в `assistant_bot`
+- [x] Создать папку `03 - Resources/📥 Из ссылок` (уже есть)
+- ~~В VS Code: ветка `feature/link2note` в `assistant_bot`~~ — не нужно: Link2Note — отдельный репозиторий
 
 **Перенос assistant_bot** (спецификация: [specs/stage-0-migration.md](specs/stage-0-migration.md), проблемы: [MIGRATION.md](MIGRATION.md))
 - [x] `config.py`, `database.py` (UTC, повторы, статусы), `scheduler.py` (ретраи, пропущенные < 24 ч, повторы)
@@ -575,8 +575,11 @@ services:
 - [x] Голос: faster-whisper `small` (ленивая загрузка, вне event loop) → Gemini → подтверждение
 - [x] Текст без ссылок — тихий контекст к голосовому; ссылки оставлены для Link2Note
 - [x] Dockerfile (Python 3.12 + uv), docker-compose без ollama
-- [ ] Ручная проверка в Telegram и `docker compose build`
-- [ ] Удалить `legacy/` (отдельный коммит после ручной проверки)
+- [x] Ручная проверка в Telegram (текст, голос, «напомни …» из текста)
+- [ ] `docker compose build` на сервере — проверить при деплое
+- [x] Удалить `legacy/`
+
+_Клон хранилища и deploy key (пункты выше) нужны для `vault.py` — сделать в начале этапа 1._
 
 ### Этап 1 — MVP только YouTube (вечер)
 - [ ] `classifier.py`, `schema.py`, `llm.digest_youtube`; дополнить `config.py` (vault, Gemini для конспектов)
