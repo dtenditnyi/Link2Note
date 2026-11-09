@@ -1,6 +1,6 @@
-"""SQLite: напоминания. Время хранится в UTC ISO-строкой — сортируется и сравнивается корректно.
+"""SQLite: напоминания, конспекты (для дубликатов) и очередь ссылок Link2Note.
 
-Таблица digests появится на этапе 2.
+Время хранится в UTC ISO-строкой — сортируется и сравнивается корректно.
 """
 
 import sqlite3
@@ -23,6 +23,28 @@ CREATE TABLE IF NOT EXISTS reminders (
     created_at TEXT    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_reminders_status_time ON reminders (status, remind_at);
+
+-- Один конспект может иметь несколько ключей (normalize ссылки + ID от yt-dlp).
+CREATE TABLE IF NOT EXISTS digests (
+    key        TEXT PRIMARY KEY,
+    note_name  TEXT NOT NULL,
+    url        TEXT NOT NULL,
+    source     TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS link_jobs (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    url           TEXT    NOT NULL,
+    hint          TEXT    NOT NULL DEFAULT '',
+    force         INTEGER NOT NULL DEFAULT 0,
+    chat_id       INTEGER NOT NULL,
+    status_msg_id INTEGER NOT NULL,
+    status        TEXT    NOT NULL DEFAULT 'pending',  -- pending | done | failed
+    attempts      INTEGER NOT NULL DEFAULT 0,          -- сколько раз воркер брался за задачу
+    created_at    TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_link_jobs_status ON link_jobs (status, id);
 """
 _COLUMNS = "id, chat_id, task, remind_at, repeat, status"
 
@@ -35,6 +57,21 @@ class Reminder:
     remind_at: datetime  # aware, UTC
     repeat: Repeat
     status: str
+
+
+@dataclass(frozen=True, slots=True)
+class LinkJob:
+    id: int
+    url: str
+    hint: str
+    force: bool
+    chat_id: int
+    status_msg_id: int
+    attempts: int
+
+
+def _now() -> str:
+    return datetime.now(UTC).isoformat()
 
 
 def _to_db(dt: datetime) -> str:
@@ -152,3 +189,62 @@ class Database:
                 "DELETE FROM reminders WHERE id = ? AND chat_id = ?", (reminder_id, chat_id)
             )
             return cur.rowcount > 0
+
+    # --- Конспекты: поиск дубликатов ------------------------------------------------------
+
+    def find_digest(self, keys: list[str]) -> str | None:
+        """Имя заметки по любому из ключей (последняя сохранённая), иначе None."""
+        if not keys:
+            return None
+        marks = ", ".join("?" * len(keys))
+        with self._conn() as c:
+            row = c.execute(
+                f"SELECT note_name FROM digests WHERE key IN ({marks}) "
+                "ORDER BY created_at DESC LIMIT 1",
+                keys,
+            ).fetchone()
+        return row[0] if row else None
+
+    def save_digest(self, keys: list[str], note_name: str, url: str, source: str) -> None:
+        now = _now()
+        with self._conn() as c:
+            c.executemany(
+                "INSERT OR REPLACE INTO digests (key, note_name, url, source, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                [(k, note_name, url, source, now) for k in dict.fromkeys(keys)],
+            )
+
+    # --- Очередь ссылок ---------------------------------------------------------------------
+
+    def add_job(self, url: str, hint: str, force: bool, chat_id: int, status_msg_id: int) -> int:
+        with self._conn() as c:
+            cur = c.execute(
+                "INSERT INTO link_jobs (url, hint, force, chat_id, status_msg_id, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (url, hint, int(force), chat_id, status_msg_id, _now()),
+            )
+            assert cur.lastrowid is not None
+            return cur.lastrowid
+
+    def start_job(self, job_id: int) -> None:
+        with self._conn() as c:
+            c.execute("UPDATE link_jobs SET attempts = attempts + 1 WHERE id = ?", (job_id,))
+
+    def release_job(self, job_id: int) -> None:
+        """Задачу прервали штатно (остановка бота) — попытку не засчитываем."""
+        with self._conn() as c:
+            c.execute(
+                "UPDATE link_jobs SET attempts = MAX(attempts - 1, 0) WHERE id = ?", (job_id,)
+            )
+
+    def finish_job(self, job_id: int, status: str) -> None:
+        with self._conn() as c:
+            c.execute("UPDATE link_jobs SET status = ? WHERE id = ?", (status, job_id))
+
+    def pending_jobs(self) -> list[LinkJob]:
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT id, url, hint, force, chat_id, status_msg_id, attempts "
+                "FROM link_jobs WHERE status = 'pending' ORDER BY id"
+            ).fetchall()
+        return [LinkJob(r[0], r[1], r[2], bool(r[3]), r[4], r[5], r[6]) for r in rows]

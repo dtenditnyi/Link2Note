@@ -4,7 +4,7 @@ import re
 from collections.abc import Sequence
 from enum import StrEnum
 from typing import Protocol
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse
 
 URL_RE = re.compile(r"https?://[^\s<>\"]+", re.IGNORECASE)
 _VIDEO_ID_RE = re.compile(r"[A-Za-z0-9_-]{11}")
@@ -76,11 +76,56 @@ def canonical_youtube(video_id: str) -> str:
     return f"https://www.youtube.com/watch?v={video_id}"
 
 
+_TRACKING_PARAMS = {"fbclid", "gclid", "yclid", "igsh", "igshid", "si", "ref", "ref_src", "feature"}
+_TRACKING_PREFIXES = ("utm_", "share")
+_INSTAGRAM_KINDS = {"reel", "reels", "p", "tv"}
+_FORCE_RE = re.compile(r"(?<!\w)заново(?!\w)[\s,.;:!—-]*", re.IGNORECASE)
+
+
+def _is_tracking(param: str) -> bool:
+    p = param.lower()
+    return p in _TRACKING_PARAMS or p.startswith(_TRACKING_PREFIXES)
+
+
+def _platform_key(host: str, segments: list[str]) -> str | None:
+    """instagram:ID для /reel|reels|p|tv/ID (в т.ч. /user/reel/ID), tiktok:ID для …/video/ID."""
+    if _on_domain(host, "instagram.com"):
+        for kind, value in zip(segments, segments[1:], strict=False):
+            if kind in _INSTAGRAM_KINDS:
+                return f"instagram:{value}"
+    if _on_domain(host, "tiktok.com") and host != "vm.tiktok.com":
+        for kind, value in zip(segments, segments[1:], strict=False):
+            if kind == "video" and value.isdigit():
+                return f"tiktok:{value}"
+    return None
+
+
 def normalize(url: str) -> str:
-    """Ключ для поиска дубликатов: youtube:ID или host/path без query и «/» в конце."""
+    """Ключ для поиска дубликатов.
+
+    youtube:ID / instagram:ID / tiktok:ID; иначе host/path?query — без трекинг-параметров
+    (utm_*, fbclid, igsh, si…), с отсортированными параметрами, без «#…» и «/» в конце.
+    """
     if vid := youtube_id(url):
         return f"youtube:{vid}"
-    return f"{_host(url)}{urlparse(url).path}".rstrip("/")
+    u = urlparse(url)
+    host = _host(url)
+    segments = [s for s in u.path.split("/") if s]
+    if key := _platform_key(host, segments):
+        return key
+    params = sorted(
+        (k, v) for k, v in parse_qsl(u.query, keep_blank_values=True) if not _is_tracking(k)
+    )
+    key = f"{host}{u.path}".rstrip("/")
+    return f"{key}?{urlencode(params)}" if params else key
+
+
+def split_force(hint: str) -> tuple[str, bool]:
+    """«заново» в комментарии → (подсказка без этого слова, True): сделать конспект ещё раз."""
+    cleaned, n = _FORCE_RE.subn(" ", hint)
+    if not n:
+        return hint, False
+    return " ".join(cleaned.split()), True
 
 
 def _trim(url: str) -> str:

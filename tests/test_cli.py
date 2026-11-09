@@ -67,7 +67,60 @@ async def test_k1_digest_error_exit_code(capsys):
     llm, http, vault = _deps()
     async with http:
         code = await run(
-            ["https://habr.com/ru/articles/1/"], llm=llm, http=http, vault=vault, today=DAY
+            ["https://www.youtube.com/@channel"], llm=llm, http=http, vault=vault, today=DAY
         )
     assert code == 1
     assert "❌" in capsys.readouterr().err
+
+
+async def test_k4_article(capsys):
+    from tests.test_fetchers import HTML
+
+    llm, _, vault = _deps()
+    llm.digest_text = AsyncMock(return_value=llm.digest_youtube.return_value)
+    http = httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda r: httpx.Response(
+                200, content=HTML.encode(), headers={"content-type": "text/html"}
+            )
+        )
+    )
+    async with http:
+        code = await run(
+            ["https://blog.example.com/post"], llm=llm, http=http, vault=vault, today=DAY
+        )
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "source: article" in out
+    llm.digest_text.assert_awaited_once()
+    llm.digest_youtube.assert_not_awaited()
+
+
+async def test_k4_video_uses_download(monkeypatch, capsys):
+    from digest import pipeline
+    from digest.fetchers import VideoMeta, VideoOptions
+
+    seen = {}
+
+    async def download(url, out_dir, opts, **kw):
+        seen["opts"] = opts
+        path = out_dir / "v.mp4"
+        path.write_bytes(b"x")
+        return path, VideoMeta(title="t", author="u", duration=5, key="tiktok:1")
+
+    monkeypatch.setattr(pipeline, "download_video", download)
+    llm, http, vault = _deps()
+    llm.digest_video_file = AsyncMock(return_value=llm.digest_youtube.return_value)
+    opts = VideoOptions(max_seconds=10)
+    async with http:
+        code = await run(
+            ["https://www.tiktok.com/@u/video/1"],
+            llm=llm,
+            http=http,
+            vault=vault,
+            today=DAY,
+            video=opts,
+        )
+    assert code == 0
+    assert seen["opts"] is opts
+    assert "source: tiktok" in capsys.readouterr().out

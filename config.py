@@ -32,7 +32,12 @@ class Settings(BaseSettings):
     git_author_name: str = "Link2Note"
     git_author_email: str = "link2note@localhost"
 
-    @field_validator("vault_repo", mode="before")
+    # Этап 2: видео через yt-dlp
+    cookies_file: Path | None = None  # cookies.txt (Netscape) для Instagram; пусто — без входа
+    video_max_seconds: int = 3600
+    video_max_mb: int = 300
+
+    @field_validator("vault_repo", "cookies_file", mode="before")
     @classmethod
     def _empty_is_none(cls, value):
         return None if isinstance(value, str) and not value.strip() else value

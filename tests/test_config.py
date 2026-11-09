@@ -86,3 +86,15 @@ def test_empty_vault_repo_is_none(monkeypatch):
     monkeypatch.setenv("OWNER_ID", "1")
     monkeypatch.setenv("VAULT_REPO", "")
     assert Settings(_env_file=None).vault_repo is None
+
+
+def test_stage2_video_settings(monkeypatch):
+    monkeypatch.setenv("BOT_TOKEN", "1:x")
+    monkeypatch.setenv("OWNER_ID", "1")
+    monkeypatch.setenv("COOKIES_FILE", "")
+    s = Settings(_env_file=None)
+    assert s.cookies_file is None
+    assert s.video_max_seconds == 3600
+    assert s.video_max_mb == 300
+    monkeypatch.setenv("COOKIES_FILE", "/secrets/cookies.txt")
+    assert Settings(_env_file=None).cookies_file == Path("/secrets/cookies.txt")

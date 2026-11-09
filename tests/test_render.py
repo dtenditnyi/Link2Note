@@ -141,6 +141,52 @@ def test_r4_timestamp_links():
     assert "- [1:02:05](https://youtu.be/dQw4w9WgXcQ?t=3725) — конец" in md
 
 
+ARTICLE = "https://blog.example.com/posts/vs-code-tips"
+TIKTOK = "https://www.tiktok.com/@u/video/7301234567890123456"
+
+
+def test_r5_article_golden():
+    d = _minimal(
+        title="Советы по VS Code",
+        emoji="📖",
+        tldr="Мультикурсор экономит больше всего времени.",
+        key_points=["Ctrl+Shift+L ставит курсор на все совпадения"],
+        resources=[Resource(kind="tool", name="VS Code")],
+        action_items=["Попробовать мультикурсор"],
+        timestamps=[Timestamp(seconds=10, label="не бывает у статей")],
+        read_minutes=2,
+        confidence="high",
+    )
+    md = to_markdown(d, url=ARTICLE, source="article", author="Иван Петров", date_added=DAY)
+    assert md == (GOLDEN / "article.md").read_text(encoding="utf-8")
+
+
+def test_r6_tiktok_duration_and_plain_timestamps():
+    d = _minimal(timestamps=[Timestamp(seconds=135, label="главное")])
+    md = to_markdown(d, url=TIKTOK, source="tiktok", author="u", date_added=DAY, duration=522)
+    fm = _frontmatter(md)
+    assert fm["duration"] == "08:42"
+    assert fm["source"] == "tiktok"
+    assert '\nduration: "08:42"\n' in md
+    assert "- 02:15 — главное" in md
+    assert "youtu.be" not in md
+    assert md.endswith(f"🔗 Источник: [TikTok]({TIKTOK})\n")
+
+
+@pytest.mark.parametrize(
+    ("source", "label"),
+    [("youtube", "YouTube"), ("instagram", "Instagram"), ("tiktok", "TikTok"), ("video", "Видео")],
+)
+def test_r6_source_labels(source, label):
+    md = to_markdown(_minimal(), url=TIKTOK, source=source, author="", date_added=DAY)
+    assert f"🔗 Источник: [{label}](" in md
+
+
+def test_r6_youtube_duration_zero_not_shown():
+    md = to_markdown(_minimal(), url=URL, source="youtube", author="", date_added=DAY, duration=0)
+    assert "duration" not in _frontmatter(md)
+
+
 def test_negative_timestamp_skipped():
     d = _minimal(timestamps=[Timestamp(seconds=-1, label="x")])
     md = to_markdown(d, url=URL, source="youtube", author="", date_added=DAY)

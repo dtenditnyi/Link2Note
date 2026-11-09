@@ -7,6 +7,7 @@ from digest.classifier import (
     classify,
     extract_urls,
     normalize,
+    split_force,
     youtube_id,
 )
 
@@ -127,3 +128,76 @@ def test_c4_dedup_and_order():
 def test_c4_empty():
     assert extract_urls(None, None) == []
     assert extract_urls("просто текст", []) == []
+
+
+# --- Этап 2: нормализация для дубликатов и «заново» -------------------------------------
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://www.instagram.com/reel/C1abc-_9/?igsh=MWx0",
+        "https://instagram.com/reels/C1abc-_9/",
+        "https://www.instagram.com/p/C1abc-_9",
+        "https://www.instagram.com/some.user/reel/C1abc-_9/?utm_source=ig_web",
+        "https://www.instagram.com/tv/C1abc-_9/",
+    ],
+)
+def test_n1_instagram_forms(url):
+    assert normalize(url) == "instagram:C1abc-_9"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://www.tiktok.com/@user.name/video/7301234567890123456?is_from_webapp=1&sender=x",
+        "https://m.tiktok.com/@u/video/7301234567890123456",
+    ],
+)
+def test_n1_tiktok_forms(url):
+    assert normalize(url) == "tiktok:7301234567890123456"
+
+
+def test_n1_tiktok_short_link_kept_as_url():
+    """Короткую ссылку без ID не угадать — ключ по адресу; второй ключ даст yt-dlp."""
+    assert normalize("https://vm.tiktok.com/ZMabc123/") == "vm.tiktok.com/ZMabc123"
+
+
+def test_n2_tracking_params_dropped_and_sorted():
+    a = normalize("https://example.com/a?utm_source=x&b=2&a=1#top")
+    b = normalize("https://www.example.com/a/?a=1&b=2")
+    assert a == b == "example.com/a?a=1&b=2"
+
+
+def test_n2_meaningful_query_kept():
+    one = normalize("https://news.ycombinator.com/item?id=1")
+    two = normalize("https://news.ycombinator.com/item?id=2")
+    assert one != two
+    assert one == "news.ycombinator.com/item?id=1"
+
+
+@pytest.mark.parametrize(
+    "param", ["utm_medium=x", "fbclid=1", "gclid=2", "igsh=3", "igshid=4", "si=5", "ref=tg"]
+)
+def test_n2_each_tracking_param(param):
+    assert normalize(f"https://example.com/post?{param}") == "example.com/post"
+
+
+def test_n3_youtube_keys_unchanged():
+    assert normalize(f"https://youtu.be/{VID}?si=1") == f"youtube:{VID}"
+
+
+@pytest.mark.parametrize(
+    ("hint", "expected"),
+    [
+        ("заново", ("", True)),
+        ("Заново, упор на хоткеи", ("упор на хоткеи", True)),
+        ("сделай ЗАНОВО подробно", ("сделай подробно", True)),
+        ("упор на хоткеи", ("упор на хоткеи", False)),
+        ("зановой", ("зановой", False)),
+        ("позаново", ("позаново", False)),
+        ("", ("", False)),
+    ],
+)
+def test_n4_force_word(hint, expected):
+    assert split_force(hint) == expected

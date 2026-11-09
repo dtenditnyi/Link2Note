@@ -15,7 +15,7 @@ Python 3.12, uv, aiogram 3, APScheduler, SQLite, google-genai, yt-dlp, trafilatu
 - Тесты: `uv run pytest -q tests/<файл>` (по одному файлу, весь набор — только перед коммитом)
 - Линт и формат: `uv run ruff check --fix . && uv run ruff format .`
 - Запустить бота локально: `uv run python main.py` (нужен заполненный `.env`; БД — `data/link2note.db`)
-- Конспект без Telegram: `uv run python -m digest.cli <url> [--hint "…"] [--save]` (живой вызов Gemini; `--save` — commit+push в `VAULT_REPO`)
+- Конспект без Telegram: `uv run python -m digest.cli <url> [--hint "…"] [--save]` — любой источник (YouTube, Reels, TikTok, X, статья); живой вызов Gemini, дубликаты не проверяет; `--save` — commit+push в `VAULT_REPO`
 - Типы: `~/.local/bin/pyright.exe --pythonpath .venv/Scripts/python.exe <файлы>` (до этапа 1 в старом коде ~38 ошибок — смотри только свои файлы)
 - Ручная проверка vault — только `../vault-test` (`remote.git` + `clone`), настоящий myObsidian не трогать
 - Docker: `docker compose build && docker compose up -d`
@@ -30,7 +30,8 @@ Python 3.12, uv, aiogram 3, APScheduler, SQLite, google-genai, yt-dlp, trafilatu
 - Секреты только через `.env` → `config.py` (pydantic-settings). Никогда не коммитить ключи, cookies, `secrets/`, `vault/`.
 - Бот отвечает только `OWNER_ID` — этот фильтр не убирать.
 - Сетевые вызовы (Gemini, yt-dlp, httpx, git) в тестах мокать. Живой прогон — только вручную.
-- Теги заметок — только из `ALLOWED_TAGS` в `digest/llm.py`, максимум 3.
+- Теги заметок — только из `TAG_MEANINGS`/`ALLOWED_TAGS` в `digest/llm.py`, максимум 3; новый тег — сразу с описанием смысла.
+- yt-dlp синхронный — только через `asyncio.to_thread`; `cookiefile` — всегда копия (yt-dlp перезаписывает файл при закрытии). Обновлять yt-dlp: `uv lock --upgrade-package yt-dlp`.
 - API aiogram 3 и google-genai меняются: перед использованием сверяйся с документацией (Context7), не по памяти.
 - Маленькие коммиты, сообщения на английском. Показывай вывод тестов как доказательство.
 

@@ -6,6 +6,9 @@ url: {{ url | yq }}
 {% if author %}
 author: {{ author | yq }}
 {% endif %}
+{% if duration %}
+duration: "{{ duration }}"
+{% endif %}
 date_added: {{ date_added.isoformat() }}
 read_minutes: {{ d.read_minutes }}
 confidence: {{ d.confidence }}

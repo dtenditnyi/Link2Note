@@ -7,7 +7,7 @@ dependencies = [
     "aiogram>=3.31,<4",
     "apscheduler>=3.10,<4",
     "google-genai",
-    "yt-dlp",
+    "yt-dlp[curl-cffi]",  # curl_cffi — impersonation, без него Instagram часто не отдаёт видео
     "trafilatura",
     "httpx",
     "jinja2",

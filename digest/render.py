@@ -15,7 +15,13 @@ from digest.classifier import youtube_id
 from digest.schema import Digest
 
 _TEMPLATES = Path(__file__).parent / "templates"
-_SOURCE_LABELS = {"youtube": "YouTube"}
+_SOURCE_LABELS = {
+    "youtube": "YouTube",
+    "instagram": "Instagram",
+    "tiktok": "TikTok",
+    "video": "Видео",
+    "article": "Статья",
+}
 _RESOURCE_ICONS = {
     "book": "📖",
     "tool": "🛠",
@@ -72,10 +78,13 @@ _env.filters.update(
 )
 
 
-def to_markdown(d: Digest, *, url: str, source: str, author: str, date_added: date) -> str:
+def to_markdown(
+    d: Digest, *, url: str, source: str, author: str, date_added: date, duration: int = 0
+) -> str:
+    """duration — секунды (0 — неизвестна, не выводится). У статьи таймкодов не бывает."""
     vid = youtube_id(url)
     timestamps = []
-    for t in d.timestamps:
+    for t in [] if source == "article" else d.timestamps:
         if t.seconds < 0:
             continue
         ts = format_ts(t.seconds)
@@ -99,6 +108,7 @@ def to_markdown(d: Digest, *, url: str, source: str, author: str, date_added: da
         source=source,
         source_label=_SOURCE_LABELS.get(source, source),
         author=_oneline(author),
+        duration=format_ts(duration) if duration > 0 else "",
         date_added=date_added,
         tldr_lines=[line.strip() for line in d.tldr.strip().splitlines() if line.strip()],
         code=code,

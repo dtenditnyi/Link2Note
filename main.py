@@ -13,9 +13,10 @@ from aiogram.enums import ParseMode
 
 from config import get_settings
 from database import Database
+from digest.fetchers import VideoOptions
 from digest.llm import DigestLLM
 from digest.vault import Vault
-from digest.worker import Job, run_worker
+from digest.worker import Job, restore_jobs, run_worker
 from handlers import basic, context, links, voice
 from handlers import reminders as reminders_handlers
 from handlers.middlewares import setup_owner_filter
@@ -102,6 +103,9 @@ async def main() -> None:
     async with httpx.AsyncClient(timeout=15) as http:
         worker = None
         if vault is not None:
+            restored = await restore_jobs(db, link_queue, bot)
+            if restored:
+                log.info("Очередь Link2Note: после перезапуска вернул задач: %d", restored)
             worker = asyncio.create_task(
                 run_worker(
                     link_queue,
@@ -112,6 +116,10 @@ async def main() -> None:
                     http=http,
                     vault=vault,
                     today=lambda: datetime.now(tz).date(),
+                    db=db,
+                    video=VideoOptions(
+                        settings.cookies_file, settings.video_max_seconds, settings.video_max_mb
+                    ),
                 )
             )
         try:

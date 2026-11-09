@@ -5,6 +5,8 @@
 # (том :ro — внутри контейнера права не поправить, а ssh не берёт ключ с широкими правами). В .env:
 #   VAULT_REPO=/vault
 #   GIT_SSH_COMMAND=ssh -i /secrets/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new
+# Instagram (необязательно): cookies.txt со ВТОРОГО аккаунта в ./secrets (бот берёт копию, файл не меняет):
+#   COOKIES_FILE=/secrets/instagram_cookies.txt
 services:
   bot:
     build: .
