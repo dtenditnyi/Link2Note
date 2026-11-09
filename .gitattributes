@@ -1,0 +1,2 @@
+# Бот работает в Docker на Linux — во всём репозитории LF, независимо от core.autocrlf.
+* text=auto eol=lf
