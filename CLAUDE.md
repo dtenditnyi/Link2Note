@@ -32,6 +32,7 @@ Python 3.12, uv, aiogram 3, APScheduler, SQLite, google-genai, yt-dlp, trafilatu
 - Сетевые вызовы (Gemini, yt-dlp, httpx, git) в тестах мокать. Живой прогон — только вручную.
 - Теги заметок — только из `TAG_MEANINGS`/`ALLOWED_TAGS` в `digest/llm.py`, максимум 3; новый тег — сразу с описанием смысла.
 - yt-dlp синхронный — только через `asyncio.to_thread`; `cookiefile` — всегда копия (yt-dlp перезаписывает файл при закрытии). Обновлять yt-dlp: `uv lock --upgrade-package yt-dlp`.
+- Gemini: `GEMINI_FALLBACK_MODEL` (по умолчанию `gemini-3.7-flash`, пусто — выключено) — одна попытка при 429/5xx и в конспектах, и в напоминаниях; «перегружен» определяет только `services/gemini_errors.py`. Конспект при перегрузке обеих моделей откладывается (`GeminiBusy` → `Postponer`), не падает. Список моделей с ключом: `client.models.list()`.
 - API aiogram 3 и google-genai меняются: перед использованием сверяйся с документацией (Context7), не по памяти.
 - Маленькие коммиты, сообщения на английском. Показывай вывод тестов как доказательство.
 

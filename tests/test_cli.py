@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 
 from digest.cli import run
+from digest.llm import Digested
 from digest.schema import Digest
 
 DAY = date(2026, 11, 9)
@@ -13,16 +14,19 @@ URL = "https://youtu.be/dQw4w9WgXcQ"
 def _deps():
     llm = MagicMock()
     llm.digest_youtube = AsyncMock(
-        return_value=Digest.model_validate(
-            {
-                "title": "CLI тест",
-                "emoji": "🧪",
-                "tldr": "Суть.",
-                "key_points": ["a"],
-                "tags": ["dev"],
-                "read_minutes": 1,
-                "confidence": "high",
-            }
+        return_value=Digested(
+            Digest.model_validate(
+                {
+                    "title": "CLI тест",
+                    "emoji": "🧪",
+                    "tldr": "Суть.",
+                    "key_points": ["a"],
+                    "tags": ["dev"],
+                    "read_minutes": 1,
+                    "confidence": "high",
+                }
+            ),
+            "gemini-test",
         )
     )
     http = httpx.AsyncClient(
@@ -124,3 +128,14 @@ async def test_k4_video_uses_download(monkeypatch, capsys):
     assert code == 0
     assert seen["opts"] is opts
     assert "source: tiktok" in capsys.readouterr().out
+
+
+async def test_k1_gemini_busy_exit_code(capsys):
+    from digest.errors import GeminiBusy
+
+    llm, http, vault = _deps()
+    llm.digest_youtube = AsyncMock(side_effect=GeminiBusy("Gemini перегружен", daily=False))
+    async with http:
+        code = await run([URL], llm=llm, http=http, vault=vault, today=DAY)
+    assert code == 1
+    assert "перегружен" in capsys.readouterr().err

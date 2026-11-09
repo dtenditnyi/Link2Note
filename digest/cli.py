@@ -71,7 +71,12 @@ async def _main(argv: list[str]) -> int:
             settings.git_author_email,
         )
         vault = candidate if candidate.is_ready() else None
-    llm = DigestLLM(settings.gemini_api_key, settings.gemini_model, settings.gemini_timeout_s)
+    llm = DigestLLM(
+        settings.gemini_api_key,
+        settings.gemini_model,
+        settings.gemini_timeout_s,
+        fallback_model=settings.gemini_fallback_model,
+    )
     async with httpx.AsyncClient(timeout=15) as http:
         return await run(
             argv,

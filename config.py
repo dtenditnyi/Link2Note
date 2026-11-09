@@ -7,6 +7,9 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Дневная квота Gemini сбрасывается в полночь по тихоокеанскому времени.
+QUOTA_RESET_TZ = ZoneInfo("America/Los_Angeles")
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
@@ -16,6 +19,8 @@ class Settings(BaseSettings):
 
     gemini_api_key: str = ""
     gemini_model: str = "gemini-3.8-flash"
+    # Одна попытка на запасной модели при 429/5xx; пусто или как основная — выключено.
+    gemini_fallback_model: str = "gemini-3.7-flash"
 
     tz: str = "Europe/Bucharest"
     db_path: Path = Path("data/link2note.db")

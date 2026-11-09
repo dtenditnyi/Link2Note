@@ -20,6 +20,7 @@ import httpx
 from digest.classifier import Source, canonical_youtube, classify, normalize, youtube_id
 from digest.errors import DigestError
 from digest.fetchers import VideoOptions, download_video, fetch_article, youtube_meta
+from digest.llm import Digested
 from digest.render import to_markdown
 from digest.schema import Digest
 
@@ -30,11 +31,11 @@ Progress = Callable[[str], Awaitable[None]]
 
 
 class DigestModel(Protocol):
-    async def digest_youtube(self, url: str, hint: str = "") -> Digest: ...
+    async def digest_youtube(self, url: str, hint: str = "") -> Digested: ...
 
-    async def digest_video_file(self, path: Path, mime_type: str, hint: str = "") -> Digest: ...
+    async def digest_video_file(self, path: Path, mime_type: str, hint: str = "") -> Digested: ...
 
-    async def digest_text(self, text: str, title: str = "", hint: str = "") -> Digest: ...
+    async def digest_text(self, text: str, title: str = "", hint: str = "") -> Digested: ...
 
 
 class DuplicateError(DigestError):
@@ -50,6 +51,7 @@ class Note:
     digest: Digest
     markdown: str
     keys: list[str] = field(default_factory=list)  # ключи для поиска дубликатов
+    model: str = ""  # модель Gemini, сделавшая конспект
 
 
 @contextmanager
@@ -64,6 +66,11 @@ def _timed(step: str, url: str) -> Generator[None]:
 def _check_known(known: Known | None, keys: list[str]) -> None:
     if known is not None and (name := known(keys)):
         raise DuplicateError(name)
+
+
+def _note(res: Digested, markdown: str, keys: list[str], url: str) -> Note:
+    log.info("📝 Конспект: модель %s (%s)", res.model, url)
+    return Note(res.digest, markdown, keys, res.model)
 
 
 async def _noop(_: str) -> None:
@@ -98,9 +105,16 @@ async def make_note(
         with _timed("oembed", url):
             meta = await youtube_meta(canonical, http)  # приватное/удалённое → до Gemini
         with _timed("gemini", url):
-            d = await llm.digest_youtube(canonical, hint)
-        md = to_markdown(d, url=canonical, source=src.value, author=meta.author, date_added=today)
-        return Note(d, md, keys)
+            res = await llm.digest_youtube(canonical, hint)
+        md = to_markdown(
+            res.digest,
+            url=canonical,
+            source=src.value,
+            author=meta.author,
+            date_added=today,
+            model=res.model,
+        )
+        return _note(res, md, keys, url)
 
     _check_known(known, keys)
 
@@ -110,11 +124,16 @@ async def make_note(
             art = await fetch_article(url, http)
         await progress("🧠 Делаю конспект…")
         with _timed("gemini", url):
-            d = await llm.digest_text(art.text, title=art.title, hint=hint)
+            res = await llm.digest_text(art.text, title=art.title, hint=hint)
         md = to_markdown(
-            d, url=url, source=src.value, author=art.author or art.sitename, date_added=today
+            res.digest,
+            url=url,
+            source=src.value,
+            author=art.author or art.sitename,
+            date_added=today,
+            model=res.model,
         )
-        return Note(d, md, keys)
+        return _note(res, md, keys, url)
 
     # Instagram, TikTok и прочие сайты с видео — скачиваем и отдаём файлом.
     with tempfile.TemporaryDirectory(prefix="l2n_") as tmp:
@@ -127,13 +146,14 @@ async def make_note(
         await progress("🧠 Смотрю видео…")
         mime = mimetypes.guess_type(path.name)[0] or "video/mp4"
         with _timed("gemini", url):
-            d = await llm.digest_video_file(path, mime, hint)
+            res = await llm.digest_video_file(path, mime, hint)
     md = to_markdown(
-        d,
+        res.digest,
         url=url,
         source=src.value,
         author=meta.author,
         date_added=today,
         duration=meta.duration,
+        model=res.model,
     )
-    return Note(d, md, keys)
+    return _note(res, md, keys, url)

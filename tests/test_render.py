@@ -191,3 +191,16 @@ def test_negative_timestamp_skipped():
     d = _minimal(timestamps=[Timestamp(seconds=-1, label="x")])
     md = to_markdown(d, url=URL, source="youtube", author="", date_added=DAY)
     assert "Таймкоды" not in md
+
+
+def test_m1_model_in_frontmatter():
+    md = to_markdown(
+        _minimal(), url=URL, source="youtube", author="", date_added=DAY, model="gemini-3.7-flash"
+    )
+    assert _frontmatter(md)["model"] == "gemini-3.7-flash"
+    assert "confidence: medium\nmodel: gemini-3.7-flash\n" in md
+
+
+def test_m1_no_model_no_field():
+    md = to_markdown(_minimal(), url=URL, source="youtube", author="", date_added=DAY)
+    assert "model" not in _frontmatter(md)

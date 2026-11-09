@@ -12,6 +12,9 @@ duration: "{{ duration }}"
 date_added: {{ date_added.isoformat() }}
 read_minutes: {{ d.read_minutes }}
 confidence: {{ d.confidence }}
+{% if model %}
+model: {{ model }}
+{% endif %}
 tags: [{{ d.tags | join(", ") }}]
 ---
 # {{ d.emoji | oneline }} {{ d.title | oneline }}

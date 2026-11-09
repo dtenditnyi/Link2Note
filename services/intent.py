@@ -1,5 +1,6 @@
 """Голосовая команда → {task, remind_at, repeat} через Gemini (structured output)."""
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, tzinfo
 from typing import Literal
@@ -8,7 +9,10 @@ from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field, ValidationError
 
+from services.gemini_errors import is_overloaded
 from services.timeparse import Repeat, next_occurrence
+
+log = logging.getLogger(__name__)
 
 _FMT = "%Y-%m-%d %H:%M"
 
@@ -73,9 +77,10 @@ def build_system_prompt(now: datetime) -> str:
 
 
 class IntentParser:
-    def __init__(self, api_key: str, model: str, tz: tzinfo, client=None):
+    def __init__(self, api_key: str, model: str, tz: tzinfo, client=None, fallback_model: str = ""):
         self.api_key = api_key
         self.model = model
+        self.fallback_model = fallback_model if fallback_model != model else ""
         self.tz = tz
         self._client = client
 
@@ -92,15 +97,33 @@ class IntentParser:
             temperature=0,
         )
 
+    async def _generate(self, user: str, now: datetime):
+        """Основная модель; при 429/5xx — одна попытка на запасной (голосовое ждать незачем)."""
+        models = self._get_client().aio.models
+        try:
+            return await models.generate_content(
+                model=self.model, contents=user, config=self._config(now)
+            )
+        except Exception as err:
+            if not (self.fallback_model and is_overloaded(err)):
+                raise
+            log.warning(
+                "Напоминание: %s ответила %s → запасная %s",
+                self.model,
+                getattr(err, "code", err),
+                self.fallback_model,
+            )
+        return await models.generate_content(
+            model=self.fallback_model, contents=user, config=self._config(now)
+        )
+
     async def parse(
         self, text: str, context: str | None, now: datetime, kind: str = "Голосовая команда"
     ) -> ParsedReminder:
         user = f"{kind}: {text}"
         if context:
             user = f"Контекст от пользователя: {context}\n{user}"
-        resp = await self._get_client().aio.models.generate_content(
-            model=self.model, contents=user, config=self._config(now)
-        )
+        resp = await self._generate(user, now)
         if not resp.text:
             raise IntentError("ИИ вернул пустой ответ. Попробуй ещё раз.")
         try:

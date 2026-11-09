@@ -16,7 +16,7 @@ from database import Database
 from digest.fetchers import VideoOptions, cookies_warning
 from digest.llm import DigestLLM
 from digest.vault import Vault
-from digest.worker import Job, restore_jobs, run_worker
+from digest.worker import Job, Postponer, restore_jobs, run_worker
 from handlers import basic, context, links, voice
 from handlers import reminders as reminders_handlers
 from handlers.middlewares import setup_owner_filter
@@ -92,7 +92,12 @@ async def main() -> None:
         transcriber=Transcriber(
             settings.whisper_model, settings.whisper_device, settings.whisper_compute_type
         ),
-        intent=IntentParser(settings.gemini_api_key, settings.gemini_model, tz),
+        intent=IntentParser(
+            settings.gemini_api_key,
+            settings.gemini_model,
+            tz,
+            fallback_model=settings.gemini_fallback_model,
+        ),
         memory=ContextMemory(ttl=timedelta(minutes=15)),
         tz=tz,
         voice_max_seconds=settings.voice_max_seconds,
@@ -100,12 +105,15 @@ async def main() -> None:
         vault_ready=vault is not None,
     )
 
+    clock = lambda: datetime.now(tz)  # noqa: E731
+    postponer = Postponer(link_queue)
+
     async with httpx.AsyncClient(timeout=15) as http:
         worker = None
         if vault is not None:
             if warning := cookies_warning(settings.cookies_file):
                 log.warning(warning)
-            restored = await restore_jobs(db, link_queue, bot)
+            restored = await restore_jobs(db, link_queue, bot, postponer=postponer, clock=clock)
             if restored:
                 log.info("Очередь Link2Note: после перезапуска вернул задач: %d", restored)
             worker = asyncio.create_task(
@@ -113,7 +121,10 @@ async def main() -> None:
                     link_queue,
                     bot=bot,
                     llm=DigestLLM(
-                        settings.gemini_api_key, settings.gemini_model, settings.gemini_timeout_s
+                        settings.gemini_api_key,
+                        settings.gemini_model,
+                        settings.gemini_timeout_s,
+                        fallback_model=settings.gemini_fallback_model,
                     ),
                     http=http,
                     vault=vault,
@@ -122,6 +133,8 @@ async def main() -> None:
                     video=VideoOptions(
                         settings.cookies_file, settings.video_max_seconds, settings.video_max_mb
                     ),
+                    clock=clock,
+                    postponer=postponer,
                 )
             )
         try:
@@ -133,6 +146,8 @@ async def main() -> None:
                 worker.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await worker
+            # После воркера: он мог успеть отложить задачу. Отложенные остаются в базе.
+            postponer.close()
 
 
 def run() -> None:

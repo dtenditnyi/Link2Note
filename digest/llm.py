@@ -3,14 +3,16 @@
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from google import genai
 from google.genai import errors, types
 from pydantic import ValidationError
 
-from digest.errors import DigestError
+from digest.errors import DigestError, GeminiBusy
 from digest.schema import Digest
+from services.gemini_errors import is_daily_quota, is_overloaded
 
 log = logging.getLogger(__name__)
 
@@ -57,8 +59,18 @@ SYSTEM = f"""Ты — мой ассистент по конспектам. Сд�
 """
 
 # Встроенный ретрай SDK: лимиты free tier (429) и перегрузка (503).
-RETRY_STATUS = [429, 503]
+RETRY_STATUS = [429, 503]  # 500/502/504 часто постоянные — не множим запросы
 RETRY_ATTEMPTS = 3
+# Настоящая перегрузка — задачу стоит отложить и повторить позже.
+POSTPONE_CODES = (429, 503)
+
+
+@dataclass(frozen=True)
+class Digested:
+    """Конспект и модель, которая его сделала (основная или запасная)."""
+
+    digest: Digest
+    model: str
 
 
 def clean(d: Digest) -> Digest:
@@ -87,11 +99,14 @@ class DigestLLM:
         timeout_s: int = 300,
         client=None,
         *,
+        fallback_model: str = "",
         poll_interval_s: float = 2,
         processing_timeout_s: float = 180,
     ):
         self.api_key = api_key
         self.model = model
+        # Запасная = основная — это та же модель, вторая попытка ничего не даст.
+        self.fallback_model = fallback_model if fallback_model != model else ""
         self.timeout_s = timeout_s
         self.poll_interval_s = poll_interval_s
         self.processing_timeout_s = processing_timeout_s
@@ -117,23 +132,44 @@ class DigestLLM:
             ),
         )
 
-    async def _generate(self, parts: list[types.Part], what: str) -> Digest:
+    async def _generate(self, parts: list[types.Part], what: str) -> Digested:
+        """Основная модель (с повторами SDK); при 429/5xx — одна попытка на запасной."""
         contents = types.Content(role="user", parts=parts)
-        try:
-            resp = await self._get_client().aio.models.generate_content(
-                model=self.model, contents=contents, config=self._config()
-            )
-        except errors.ClientError as err:
-            if err.code == 429:
-                raise DigestError(
-                    "Лимит Gemini на сегодня исчерпан (free tier) — попробуй позже."
-                ) from err
-            raise DigestError(f"Gemini не смог открыть {what}: {err.message or err.code}") from err
-        except errors.ServerError as err:
-            raise DigestError("Gemini сейчас недоступен — попробуй через несколько минут.") from err
-        return clean(self._parse(resp.text))
+        models = [self.model] + ([self.fallback_model] if self.fallback_model else [])
+        failures: list[errors.APIError] = []
+        for model in models:
+            try:
+                resp = await self._get_client().aio.models.generate_content(
+                    model=model, contents=contents, config=self._config()
+                )
+            except errors.APIError as err:
+                if not is_overloaded(err):
+                    raise DigestError(
+                        f"Gemini не смог открыть {what}: {err.message or err.code}"
+                    ) from err
+                failures.append(err)
+                if model != models[-1]:
+                    log.warning("Gemini %s: %s → запасная %s", model, err.code, models[-1])
+                continue
+            log.info("Конспект сделала модель %s", model)
+            return Digested(clean(self._parse(resp.text)), model)
 
-    async def digest_youtube(self, url: str, hint: str = "") -> Digest:
+        last = failures[-1]
+        if not any(err.code in POSTPONE_CODES for err in failures):
+            # 500/502/504 у обеих моделей: часто постоянная ошибка (кодек, длина) — не откладываем.
+            raise DigestError(
+                f"Gemini сейчас недоступен (ошибка {last.code}) — попробуй позже."
+            ) from last
+        daily = all(is_daily_quota(err) for err in failures)
+        if daily:
+            message = "Лимит Gemini на сегодня исчерпан (free tier)."
+        elif last.code == 429:
+            message = "Лимит запросов к Gemini исчерпан — попробую позже."
+        else:
+            message = "Gemini сейчас недоступен (перегружен) — попробую позже."
+        raise GeminiBusy(message, daily=daily) from last
+
+    async def digest_youtube(self, url: str, hint: str = "") -> Digested:
         """url — канонический https://www.youtube.com/watch?v=ID (публичное видео)."""
         # Part.from_uri не подходит: без mime_type он угадывает тип по расширению и падает.
         parts = [
@@ -142,7 +178,7 @@ class DigestLLM:
         ]
         return await self._generate(parts, "видео (unlisted/private или слишком длинное?)")
 
-    async def digest_video_file(self, path: Path, mime_type: str, hint: str = "") -> Digest:
+    async def digest_video_file(self, path: Path, mime_type: str, hint: str = "") -> Digested:
         """Видео-файл → Files API → конспект. Файл в облаке удаляется в любом случае."""
         files = self._get_client().aio.files
         try:
@@ -176,7 +212,7 @@ class DigestLLM:
             raise DigestError(f"Gemini не смог обработать видео (состояние {f.state}).")
         return f
 
-    async def digest_text(self, text: str, title: str = "", hint: str = "") -> Digest:
+    async def digest_text(self, text: str, title: str = "", hint: str = "") -> Digested:
         prompt = _with_hint("Сделай конспект этой статьи.", hint)
         if title.strip():
             prompt += f"\nЗаголовок: {title.strip()}"

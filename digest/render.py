@@ -79,7 +79,14 @@ _env.filters.update(
 
 
 def to_markdown(
-    d: Digest, *, url: str, source: str, author: str, date_added: date, duration: int = 0
+    d: Digest,
+    *,
+    url: str,
+    source: str,
+    author: str,
+    date_added: date,
+    duration: int = 0,
+    model: str = "",
 ) -> str:
     """duration — секунды (0 — неизвестна, не выводится). У статьи таймкодов не бывает."""
     vid = youtube_id(url)
@@ -109,6 +116,7 @@ def to_markdown(
         source_label=_SOURCE_LABELS.get(source, source),
         author=_oneline(author),
         duration=format_ts(duration) if duration > 0 else "",
+        model=_oneline(model),
         date_added=date_added,
         tldr_lines=[line.strip() for line in d.tldr.strip().splitlines() if line.strip()],
         code=code,

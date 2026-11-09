@@ -11,3 +11,14 @@ class VaultError(DigestError):
     def __init__(self, message: str, *, note_name: str | None = None):
         super().__init__(message)
         self.note_name = note_name
+
+
+class GeminiBusy(DigestError):
+    """Основная и запасная модели перегружены (429/5xx) — задачу стоит отложить, а не ронять.
+
+    daily=True — обе упёрлись в дневную квоту: ждать до её сброса, а не минуты.
+    """
+
+    def __init__(self, message: str, *, daily: bool = False):
+        super().__init__(message)
+        self.daily = daily

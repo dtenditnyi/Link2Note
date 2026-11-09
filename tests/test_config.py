@@ -98,3 +98,12 @@ def test_stage2_video_settings(monkeypatch):
     assert s.video_max_mb == 300
     monkeypatch.setenv("COOKIES_FILE", "/secrets/cookies.txt")
     assert Settings(_env_file=None).cookies_file == Path("/secrets/cookies.txt")
+
+
+def test_c1_fallback_model(monkeypatch):
+    monkeypatch.setenv("BOT_TOKEN", "1:x")
+    monkeypatch.setenv("OWNER_ID", "1")
+    monkeypatch.delenv("GEMINI_FALLBACK_MODEL", raising=False)
+    assert Settings(_env_file=None).gemini_fallback_model == "gemini-3.7-flash"
+    monkeypatch.setenv("GEMINI_FALLBACK_MODEL", "")
+    assert Settings(_env_file=None).gemini_fallback_model == ""

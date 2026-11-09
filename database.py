@@ -42,7 +42,10 @@ CREATE TABLE IF NOT EXISTS link_jobs (
     status_msg_id INTEGER NOT NULL,
     status        TEXT    NOT NULL DEFAULT 'pending',  -- pending | done | failed
     attempts      INTEGER NOT NULL DEFAULT 0,          -- сколько раз воркер брался за задачу
-    created_at    TEXT    NOT NULL
+    created_at    TEXT    NOT NULL,
+    run_after     TEXT,                                -- UTC; отложена до этого времени
+    defers        INTEGER NOT NULL DEFAULT 0,          -- откладываний из-за перегрузки Gemini
+    quota_waits   INTEGER NOT NULL DEFAULT 0           -- ожиданий сброса дневной квоты
 );
 CREATE INDEX IF NOT EXISTS idx_link_jobs_status ON link_jobs (status, id);
 """
@@ -68,10 +71,28 @@ class LinkJob:
     chat_id: int
     status_msg_id: int
     attempts: int
+    run_after: datetime | None = None  # aware, UTC
+    defers: int = 0
+    quota_waits: int = 0
 
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+# Колонки, добавленные после первого выпуска таблицы (CREATE TABLE IF NOT EXISTS их не добавит).
+_LINK_JOBS_ADDED = {
+    "run_after": "TEXT",
+    "defers": "INTEGER NOT NULL DEFAULT 0",
+    "quota_waits": "INTEGER NOT NULL DEFAULT 0",
+}
+
+
+def _migrate(c: sqlite3.Connection) -> None:
+    existing = {row[1] for row in c.execute("PRAGMA table_info(link_jobs)")}
+    for column, decl in _LINK_JOBS_ADDED.items():
+        if column not in existing:
+            c.execute(f"ALTER TABLE link_jobs ADD COLUMN {column} {decl}")
 
 
 def _to_db(dt: datetime) -> str:
@@ -102,6 +123,7 @@ class Database:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._conn() as c:
             c.executescript(_SCHEMA)
+            _migrate(c)
 
     def add(
         self, chat_id: int, task: str, remind_at: datetime, repeat: Repeat = Repeat.NONE
@@ -230,6 +252,16 @@ class Database:
         with self._conn() as c:
             c.execute("UPDATE link_jobs SET attempts = attempts + 1 WHERE id = ?", (job_id,))
 
+    def postpone_job(self, job_id: int, run_after: datetime, *, daily: bool) -> None:
+        """Gemini перегружен: задача ждёт до run_after. Это не падение — попытку возвращаем."""
+        counter = "quota_waits" if daily else "defers"
+        with self._conn() as c:
+            c.execute(
+                f"UPDATE link_jobs SET run_after = ?, {counter} = {counter} + 1, "
+                "attempts = MAX(attempts - 1, 0) WHERE id = ?",
+                (_to_db(run_after), job_id),
+            )
+
     def release_job(self, job_id: int) -> None:
         """Задачу прервали штатно (остановка бота) — попытку не засчитываем."""
         with self._conn() as c:
@@ -244,7 +276,22 @@ class Database:
     def pending_jobs(self) -> list[LinkJob]:
         with self._conn() as c:
             rows = c.execute(
-                "SELECT id, url, hint, force, chat_id, status_msg_id, attempts "
+                "SELECT id, url, hint, force, chat_id, status_msg_id, attempts, "
+                "run_after, defers, quota_waits "
                 "FROM link_jobs WHERE status = 'pending' ORDER BY id"
             ).fetchall()
-        return [LinkJob(r[0], r[1], r[2], bool(r[3]), r[4], r[5], r[6]) for r in rows]
+        return [
+            LinkJob(
+                r[0],
+                r[1],
+                r[2],
+                bool(r[3]),
+                r[4],
+                r[5],
+                r[6],
+                datetime.fromisoformat(r[7]) if r[7] else None,
+                r[8],
+                r[9],
+            )  # fmt: skip
+            for r in rows
+        ]

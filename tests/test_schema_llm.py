@@ -75,14 +75,14 @@ def test_system_prompt_lists_allowed_tags():
 async def test_l2_tags_filtered():
     data = {**MINIMAL, "tags": ["dev", "кулинария", "ai", "homelab", "obsidian"]}
     llm, _ = _llm(json.dumps(data))
-    d = await llm.digest_youtube(URL)
+    d = (await llm.digest_youtube(URL)).digest
     assert d.tags == ["dev", "ai", "homelab"]
 
 
 async def test_l2_no_valid_tags_gives_personal():
     data = {**MINIMAL, "tags": ["unknown"]}
     llm, _ = _llm(json.dumps(data))
-    assert (await llm.digest_youtube(URL)).tags == ["personal"]
+    assert (await llm.digest_youtube(URL)).digest.tags == ["personal"]
 
 
 def test_clean_tags_case_and_dupes():
@@ -105,7 +105,7 @@ async def test_l3_bad_response_raises_digest_error(bad):
 
 async def test_l3_optional_lists_default_empty():
     llm, _ = _llm(json.dumps(MINIMAL))
-    d = await llm.digest_youtube(URL)
+    d = (await llm.digest_youtube(URL)).digest
     assert d.steps == d.shortcuts == d.code == d.resources == []
     assert d.action_items == d.timestamps == []
 
@@ -196,7 +196,7 @@ async def test_l5_video_file_flow(tmp_path):
     video = tmp_path / "C1abc.mp4"
     video.write_bytes(b"x")
     llm, client = _video_llm(["PROCESSING", "PROCESSING", "ACTIVE"])
-    d = await llm.digest_video_file(video, "video/mp4", "упор на хоткеи")
+    d = (await llm.digest_video_file(video, "video/mp4", "упор на хоткеи")).digest
     assert d.title == "Заголовок"
 
     up = client.aio.files.upload.call_args.kwargs
@@ -239,7 +239,7 @@ async def test_l5_delete_failure_is_not_fatal(tmp_path):
     video.write_bytes(b"x")
     llm, client = _video_llm(["ACTIVE"])
     client.aio.files.delete = AsyncMock(side_effect=RuntimeError("network"))
-    d = await llm.digest_video_file(video, "video/mp4")
+    d = (await llm.digest_video_file(video, "video/mp4")).digest
     assert d.title == "Заголовок"
 
 
@@ -305,3 +305,196 @@ def test_prompt_is_not_video_only():
     """Промпт общий для видео и статей: правила про «материал», а не только «видео»."""
     assert "материал" in SYSTEM
     assert "timestamps" in SYSTEM and "стать" in SYSTEM  # у статей таймкодов нет
+
+
+# --- Запасная модель (G1–G7) ------------------------------------------------------------------
+
+from google.genai import errors as genai_errors  # noqa: E402
+
+from digest.errors import GeminiBusy  # noqa: E402
+from digest.llm import Digested  # noqa: E402
+
+
+def _err(code: int, *, daily: bool = False):
+    if code == 429:
+        quota = (
+            "GenerateRequestsPerDayPerProjectPerModel-FreeTier"
+            if daily
+            else ("GenerateRequestsPerMinutePerProjectPerModel-FreeTier")
+        )
+        body = {
+            "error": {
+                "code": 429,
+                "message": "Resource has been exhausted",
+                "status": "RESOURCE_EXHAUSTED",
+                "details": [
+                    {
+                        "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+                        "violations": [{"quotaMetric": "x", "quotaId": quota}],
+                    },
+                    {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "33s"},
+                ],
+            }
+        }
+        return genai_errors.ClientError(429, body)
+    body = {"error": {"code": code, "message": "The model is overloaded", "status": "X"}}
+    if code >= 500:
+        return genai_errors.ServerError(code, body)
+    return genai_errors.ClientError(code, body)
+
+
+def _by_model(outcomes: dict):
+    """generate_content, отвечающий по имени модели: исключение или JSON-текст."""
+    calls: list[str] = []
+
+    async def generate(*, model, contents, config):
+        calls.append(model)
+        out = outcomes[model]
+        if isinstance(out, Exception):
+            raise out
+        return SimpleNamespace(text=out, parsed=None)
+
+    return generate, calls
+
+
+def _fb_llm(outcomes: dict, fallback="gemini-fallback"):
+    generate, calls = _by_model(outcomes)
+    client = MagicMock()
+    client.aio.models.generate_content = AsyncMock(side_effect=generate)
+    client.aio.files.upload = AsyncMock(return_value=_file("ACTIVE"))
+    client.aio.files.delete = AsyncMock()
+    llm = DigestLLM(
+        api_key="k",
+        model="gemini-main",
+        client=client,
+        fallback_model=fallback,
+        poll_interval_s=0,
+    )
+    return llm, client, calls
+
+
+async def test_g1_main_ok_no_fallback():
+    llm, _, calls = _fb_llm({"gemini-main": MINIMAL_JSON})
+    res = await llm.digest_youtube(URL)
+    assert isinstance(res, Digested)
+    assert res.model == "gemini-main"
+    assert res.digest.title == "Заголовок"
+    assert calls == ["gemini-main"]
+
+
+@pytest.mark.parametrize("code", [429, 500, 502, 503, 504])
+async def test_g2_g3_overloaded_main_uses_fallback(code):
+    llm, client, calls = _fb_llm({"gemini-main": _err(code), "gemini-fallback": MINIMAL_JSON})
+    res = await llm.digest_youtube(URL, "упор")
+    assert calls == ["gemini-main", "gemini-fallback"]
+    assert res.model == "gemini-fallback"
+    first, second = client.aio.models.generate_content.call_args_list
+    assert first.kwargs["contents"] == second.kwargs["contents"]
+
+
+async def test_g2_video_file_uploaded_once_for_fallback(tmp_path):
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"x")
+    llm, client, calls = _fb_llm({"gemini-main": _err(503), "gemini-fallback": MINIMAL_JSON})
+    res = await llm.digest_video_file(video, "video/mp4")
+    assert res.model == "gemini-fallback"
+    assert calls == ["gemini-main", "gemini-fallback"]
+    client.aio.files.upload.assert_awaited_once()
+    client.aio.files.delete.assert_awaited_once()
+
+
+async def test_g2_text_fallback():
+    llm, _, calls = _fb_llm({"gemini-main": _err(503), "gemini-fallback": MINIMAL_JSON})
+    res = await llm.digest_text("текст статьи", title="t")
+    assert res.model == "gemini-fallback" and calls == ["gemini-main", "gemini-fallback"]
+
+
+@pytest.mark.parametrize("code", [400, 403, 404])
+async def test_g4_client_error_no_fallback(code):
+    llm, _, calls = _fb_llm({"gemini-main": _err(code), "gemini-fallback": MINIMAL_JSON})
+    with pytest.raises(DigestError) as exc:
+        await llm.digest_youtube(URL)
+    assert not isinstance(exc.value, GeminiBusy)
+    assert calls == ["gemini-main"]
+
+
+async def test_g5_both_overloaded_is_busy():
+    llm, _, calls = _fb_llm({"gemini-main": _err(503), "gemini-fallback": _err(503)})
+    with pytest.raises(GeminiBusy) as exc:
+        await llm.digest_youtube(URL)
+    assert exc.value.daily is False
+    assert calls == ["gemini-main", "gemini-fallback"]
+
+
+async def test_g5_both_daily_quota():
+    llm, _, _ = _fb_llm(
+        {"gemini-main": _err(429, daily=True), "gemini-fallback": _err(429, daily=True)}
+    )
+    with pytest.raises(GeminiBusy) as exc:
+        await llm.digest_youtube(URL)
+    assert exc.value.daily is True
+
+
+async def test_g5_daily_and_503_is_not_daily():
+    llm, _, _ = _fb_llm({"gemini-main": _err(429, daily=True), "gemini-fallback": _err(503)})
+    with pytest.raises(GeminiBusy) as exc:
+        await llm.digest_youtube(URL)
+    assert exc.value.daily is False
+
+
+@pytest.mark.parametrize("fallback", ["", "gemini-main"])
+async def test_g6_no_fallback_single_call(fallback):
+    llm, _, calls = _fb_llm({"gemini-main": _err(503)}, fallback=fallback)
+    with pytest.raises(GeminiBusy):
+        await llm.digest_youtube(URL)
+    assert calls == ["gemini-main"]
+
+
+async def test_g7_fallback_client_error_is_plain_digest_error():
+    llm, _, _ = _fb_llm({"gemini-main": _err(503), "gemini-fallback": _err(400)})
+    with pytest.raises(DigestError) as exc:
+        await llm.digest_youtube(URL)
+    assert not isinstance(exc.value, GeminiBusy)
+
+
+async def test_m2_fallback_logged(caplog):
+    import logging
+
+    caplog.set_level(logging.INFO)
+    llm, _, _ = _fb_llm({"gemini-main": _err(503), "gemini-fallback": MINIMAL_JSON})
+    await llm.digest_youtube(URL)
+    assert "gemini-fallback" in caplog.text and "503" in caplog.text
+
+
+def test_is_overloaded_and_daily():
+    from services.gemini_errors import is_daily_quota, is_overloaded
+
+    assert is_overloaded(_err(503)) and is_overloaded(_err(429)) and is_overloaded(_err(500))
+    assert not is_overloaded(_err(400)) and not is_overloaded(RuntimeError("x"))
+    assert is_daily_quota(_err(429, daily=True))
+    assert not is_daily_quota(_err(429)) and not is_daily_quota(_err(503))
+
+
+# --- После ревью: 500 не «перегружен» для откладывания -------------------------------------
+
+
+def test_sdk_retries_only_overload_codes():
+    from digest.llm import RETRY_STATUS
+
+    assert sorted(RETRY_STATUS) == [429, 503]
+
+
+@pytest.mark.parametrize("code", [500, 502, 504])
+async def test_g8_server_errors_try_fallback_but_do_not_postpone(code):
+    llm, _, calls = _fb_llm({"gemini-main": _err(code), "gemini-fallback": _err(code)})
+    with pytest.raises(DigestError) as exc:
+        await llm.digest_youtube(URL)
+    assert not isinstance(exc.value, GeminiBusy)  # 500 часто постоянная — не откладываем
+    assert "недоступен" in str(exc.value)
+    assert calls == ["gemini-main", "gemini-fallback"]
+
+
+async def test_g8_mixed_503_and_500_postpones():
+    llm, _, _ = _fb_llm({"gemini-main": _err(500), "gemini-fallback": _err(503)})
+    with pytest.raises(GeminiBusy):
+        await llm.digest_youtube(URL)

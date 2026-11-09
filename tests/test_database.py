@@ -174,3 +174,44 @@ def test_d2_init_on_old_db_adds_tables(tmp_path):
     assert old.find_digest(["k"]) == "n"
     old.add_job("https://a", "", False, 1, 1)
     assert len(old.pending_jobs()) == 1
+
+
+def test_b1_migration_adds_postpone_columns(tmp_path):
+    from database import Database
+
+    path = tmp_path / "stage2.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        "CREATE TABLE link_jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, url TEXT NOT NULL,"
+        " hint TEXT NOT NULL DEFAULT '', force INTEGER NOT NULL DEFAULT 0,"
+        " chat_id INTEGER NOT NULL, status_msg_id INTEGER NOT NULL,"
+        " status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0,"
+        " created_at TEXT NOT NULL);"
+        "INSERT INTO link_jobs (url, chat_id, status_msg_id, created_at)"
+        " VALUES ('https://old', 1, 5, '2026-11-09T10:00:00+00:00');"
+    )
+    conn.commit()
+    conn.close()
+    db = Database(path)
+    db.init()
+    db.init()  # повторный init не падает
+    [job] = db.pending_jobs()
+    assert job.url == "https://old"
+    assert (job.run_after, job.defers, job.quota_waits) == (None, 0, 0)
+
+
+def test_b2_postpone_job(db):
+    jid = db.add_job("https://a", "", False, OWNER, 1)
+    db.start_job(jid)
+    at = datetime(2026, 11, 9, 14, 5, tzinfo=TZ)
+    db.postpone_job(jid, at, daily=False)
+    [job] = db.pending_jobs()
+    assert job.run_after == at
+    assert job.run_after.tzinfo is not None
+    assert (job.defers, job.quota_waits, job.attempts) == (1, 0, 0)
+    db.postpone_job(jid, at + timedelta(hours=20), daily=True)
+    [job] = db.pending_jobs()
+    assert (job.defers, job.quota_waits) == (1, 1)
+    with db._conn() as c:
+        stored = c.execute("SELECT run_after FROM link_jobs WHERE id = ?", (jid,)).fetchone()[0]
+    assert stored.endswith("+00:00")  # в базе UTC
