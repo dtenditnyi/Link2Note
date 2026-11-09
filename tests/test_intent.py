@@ -99,3 +99,17 @@ def test_client_is_lazy(monkeypatch):
     monkeypatch.setattr(mod.genai, "Client", lambda **kw: created.append(kw))
     IntentParser(api_key="k", model="m", tz=TZ)
     assert created == []
+
+
+async def test_kind_label_in_request(now):
+    """Подпись команды настраивается: «Текстовая команда» для свободного текста."""
+    client = fake_client({"task": "t", "remind_at": "2026-11-08 13:00", "repeat": "none"})
+    await parser(client).parse("напомни купить хлеб", None, now, kind="Текстовая команда")
+    contents = str(client.aio.models.generate_content.call_args.kwargs["contents"])
+    assert "Текстовая команда: напомни купить хлеб" in contents
+
+
+async def test_default_kind_is_voice(now):
+    client = fake_client({"task": "t", "remind_at": "2026-11-08 13:00", "repeat": "none"})
+    await parser(client).parse("x", None, now)
+    assert "Голосовая команда: x" in str(client.aio.models.generate_content.call_args.kwargs)

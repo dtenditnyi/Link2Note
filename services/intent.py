@@ -92,8 +92,10 @@ class IntentParser:
             temperature=0,
         )
 
-    async def parse(self, text: str, context: str | None, now: datetime) -> ParsedReminder:
-        user = f"Голосовая команда: {text}"
+    async def parse(
+        self, text: str, context: str | None, now: datetime, kind: str = "Голосовая команда"
+    ) -> ParsedReminder:
+        user = f"{kind}: {text}"
         if context:
             user = f"Контекст от пользователя: {context}\n{user}"
         resp = await self._get_client().aio.models.generate_content(

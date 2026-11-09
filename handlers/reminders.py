@@ -1,11 +1,12 @@
 """Напоминания: создание (FSM), список, карточка, изменение, удаление, отложить/готово."""
 
+import logging
 from collections.abc import Callable
 from datetime import UTC, datetime, time, timedelta, tzinfo
 from html import escape
 
 from aiogram import F, Router
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
@@ -15,6 +16,8 @@ from handlers import keyboards as kb
 from handlers.keyboards import CREATE_BUTTON, LIST_BUTTON, ReminderCb, RepeatCb, SnoozeCb
 from handlers.utils import edit_text, remove_markup
 from scheduler import ReminderScheduler
+from services.intent import IntentError, IntentParser
+from services.text_reminder import has_trigger, parse_text_reminder
 from services.timeparse import (
     FORMATS_HELP,
     REPEAT_LABELS,
@@ -26,7 +29,12 @@ from services.timeparse import (
 
 __all__ = ["CREATE_BUTTON", "LIST_BUTTON", "ReminderCb", "RepeatCb", "SnoozeCb", "router"]
 
+log = logging.getLogger(__name__)
 router = Router(name="reminders")
+FREE_TEXT_HINT = (
+    "Напиши время цифрами, например «через 20 мин напомни выпить воды» "
+    "или «завтра в 9:00 напомни позвонить», — или создай через /new."
+)
 NOT_FOUND = "Напоминание не найдено."
 
 
@@ -68,13 +76,92 @@ async def show_list(message: Message, db: Database, tz: tzinfo) -> None:
     await message.answer("Твои напоминания:", reply_markup=kb.reminders_list(reminders, tz))
 
 
+async def _ask_repeat(
+    message: Message, state: FSMContext, task: str, remind_at: datetime, tz: tzinfo
+) -> None:
+    await state.update_data(task=task, remind_at=remind_at.isoformat())
+    await state.set_state(CreateReminder.repeat)
+    await message.answer(_repeat_question(task, remind_at, tz), reply_markup=kb.repeat_choice())
+
+
+def _repeat_question(task: str, remind_at: datetime, tz: tzinfo) -> str:
+    return f"Напомню «{escape(task)}» {format_dt(remind_at, tz)}. Повторять?"
+
+
+@router.message(StateFilter(None), F.text.func(has_trigger))
+async def on_free_text(
+    message: Message,
+    state: FSMContext,
+    intent: IntentParser,
+    tz: tzinfo,
+    clock: Callable[[], datetime],
+) -> None:
+    """Свободный текст со словом «напомни»: время из текста, иначе — Gemini."""
+    text = message.text or ""
+    now = clock()
+    try:
+        parsed = parse_text_reminder(text, now)
+    except ValueError as err:
+        await message.answer(str(err))
+        return
+
+    if parsed.remind_at is not None:
+        if not parsed.task:
+            await state.update_data(remind_at=parsed.remind_at.isoformat())
+            await state.set_state(CreateReminder.task)
+            await message.answer(
+                f"Напомню {format_dt(parsed.remind_at, tz)}. О чём напомнить? /cancel — отмена."
+            )
+            return
+        await _ask_repeat(message, state, parsed.task, parsed.remind_at, tz)
+        return
+
+    status = await message.answer("<i>🤔 Разбираю…</i>")
+    try:
+        result = await intent.parse(text, None, now, kind="Текстовая команда")
+    except IntentError as err:
+        await status.edit_text(f"{escape(str(err))}\n\n{FREE_TEXT_HINT}")
+        return
+    except Exception:
+        log.exception("Free-text reminder parsing failed")
+        await status.edit_text(f"Не получилось разобрать напоминание.\n\n{FREE_TEXT_HINT}")
+        return
+    await state.update_data(task=result.task, remind_at=result.remind_at.isoformat())
+    await state.set_state(CreateReminder.repeat)
+    await status.edit_text(
+        _repeat_question(result.task, result.remind_at, tz), reply_markup=kb.repeat_choice()
+    )
+
+
 @router.message(CreateReminder.task)
-async def on_task(message: Message, state: FSMContext) -> None:
-    task = (message.text or "").strip()
-    if not task:
+async def on_task(
+    message: Message, state: FSMContext, tz: tzinfo, clock: Callable[[], datetime]
+) -> None:
+    text = (message.text or "").strip()
+    if not text:
         await message.answer("Напиши текст напоминания.")
         return
-    await state.update_data(task=task)
+    try:
+        parsed = parse_text_reminder(text, clock())
+    except ValueError as err:
+        await message.answer(str(err))
+        return
+    data = await state.get_data()
+    remind_at = parsed.remind_at
+    if remind_at is None and "remind_at" in data:  # время пришло раньше: «напомни через 5 минут»
+        remind_at = datetime.fromisoformat(data["remind_at"])
+
+    if not parsed.task:
+        if parsed.remind_at is not None:
+            await state.update_data(remind_at=parsed.remind_at.isoformat())
+            await message.answer(f"Напомню {format_dt(parsed.remind_at, tz)}. О чём напомнить?")
+        else:
+            await message.answer("Напиши текст напоминания.")
+        return
+    if remind_at is not None:
+        await _ask_repeat(message, state, parsed.task, remind_at, tz)
+        return
+    await state.update_data(task=parsed.task)
     await state.set_state(CreateReminder.time)
     await message.answer(f"Когда напомнить?\n<i>{FORMATS_HELP}</i>")
 
@@ -88,11 +175,8 @@ async def on_time(
     except ValueError as err:
         await message.answer(str(err))
         return
-    await state.update_data(remind_at=remind_at.isoformat())
-    await state.set_state(CreateReminder.repeat)
-    await message.answer(
-        f"Напомню {format_dt(remind_at, tz)}. Повторять?", reply_markup=kb.repeat_choice()
-    )
+    task = (await state.get_data()).get("task", "")
+    await _ask_repeat(message, state, task, remind_at, tz)
 
 
 @router.message(CreateReminder.repeat)

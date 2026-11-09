@@ -148,3 +148,38 @@ async def test_stale_repeat_button_through_dispatcher(dp, fake_bot):
     await dp.feed_update(fake_bot, update)
     assert await dp.fsm.storage.get_state(_key()) == EditReminder.time.state
     assert [type(m).__name__ for m in fake_bot.session.calls] == ["AnswerCallbackQuery"]
+
+
+async def test_trigger_text_becomes_reminder_not_context(dp, fake_bot):
+    """B1/B7 на собранном боте: «напомни» + время → вопрос о повторе, не контекст."""
+    await _reset(dp)
+    await dp.feed_update(
+        fake_bot, _message_update(OWNER, "через 2 минуты напомни про лимиты клода")
+    )
+    assert await dp.fsm.storage.get_state(_key()) == CreateReminder.repeat.state
+    assert _memory(dp) is None
+    assert [type(m).__name__ for m in fake_bot.session.calls] == ["SendMessage"]
+
+
+async def test_time_without_trigger_stays_context(dp, fake_bot):
+    """B7: без слова «напомни» — тихий контекст, Gemini не вызывается."""
+    await _reset(dp)
+    dp.workflow_data["intent"].parse.reset_mock()
+    await dp.feed_update(fake_bot, _message_update(OWNER, "встреча через 2 часа"))
+    assert _memory(dp) == "встреча через 2 часа"
+    assert fake_bot.session.calls == []
+    dp.workflow_data["intent"].parse.assert_not_called()
+
+
+async def test_trigger_text_in_fsm_state_not_intercepted(dp, fake_bot):
+    """B8: в состоянии EditReminder.time текст обрабатывает сценарий изменения."""
+    await _reset(dp)
+    db = dp.workflow_data["db"]
+    rid = db.add(OWNER, "x", datetime.now(TZ) + timedelta(hours=1))
+    await dp.fsm.storage.set_state(_key(), EditReminder.time)
+    await dp.fsm.storage.set_data(_key(), {"reminder_id": rid})
+    await dp.feed_update(
+        fake_bot, _message_update(OWNER, "через 2 минуты напомни про лимиты клода")
+    )
+    # Сценарий изменения не понял время целиком и остался в своём состоянии.
+    assert await dp.fsm.storage.get_state(_key()) == EditReminder.time.state

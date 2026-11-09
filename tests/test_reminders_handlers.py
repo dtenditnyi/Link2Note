@@ -26,7 +26,7 @@ async def test_full_create_flow(state, ctx, db, aps, now):
     await h.start_create(make_message(h.CREATE_BUTTON), state)
     assert await state.get_state() == h.CreateReminder.task.state
 
-    await h.on_task(make_message("Выпить <воды>"), state)
+    await h.on_task(make_message("Выпить <воды>"), state, tz=TZ, clock=ctx["clock"])
     assert await state.get_state() == h.CreateReminder.time.state
 
     msg = make_message("через 20 мин")
@@ -49,17 +49,17 @@ async def test_full_create_flow(state, ctx, db, aps, now):
     assert "ежедневно" in text
 
 
-async def test_empty_task_asks_again(state):
+async def test_empty_task_asks_again(state, now):
     await state.set_state(h.CreateReminder.task)
     msg = make_message("   ")
-    await h.on_task(msg, state)
+    await h.on_task(msg, state, tz=TZ, clock=lambda: now)
     assert await state.get_state() == h.CreateReminder.task.state
     msg.answer.assert_called_once()
 
 
-async def test_task_from_non_text_message_asks_again(state):
+async def test_task_from_non_text_message_asks_again(state, now):
     await state.set_state(h.CreateReminder.task)
-    await h.on_task(make_message(None), state)
+    await h.on_task(make_message(None), state, tz=TZ, clock=lambda: now)
     assert await state.get_state() == h.CreateReminder.task.state
 
 
@@ -316,3 +316,125 @@ async def test_snooze_on_inaccessible_message_sends_new_message(ctx, db, now):
     assert db.get(rid, OWNER).status == "pending"
     assert "Отложено до" in cb.bot.send_message.call_args.args[1]
     cb.answer.assert_called_once()
+
+
+# --- Время из текста (docs/specs/text-time-extraction.md) ---------------------------
+
+
+def _intent(result=None, error=None):
+    from unittest.mock import AsyncMock, MagicMock
+
+    intent = MagicMock()
+    intent.parse = AsyncMock(return_value=result, side_effect=error)
+    return intent
+
+
+async def _free(msg, state, ctx, intent=None):
+    await h.on_free_text(msg, state, intent=intent or _intent(), tz=TZ, clock=ctx["clock"])
+
+
+async def test_free_text_with_time_asks_repeat_only(state, ctx, db, aps, now):
+    """B1: время не спрашивается, сразу «Повторять?»; после «Один раз» — в БД и планировщике."""
+    msg = make_message("через 2 минуты напомни про лимиты клода")
+    intent = _intent()
+    await _free(msg, state, ctx, intent)
+    intent.parse.assert_not_called()
+    assert await state.get_state() == h.CreateReminder.repeat.state
+    text = sent_texts(msg.answer)[0]
+    assert "«лимиты клода»" in text and "08.11.2026 12:02" in text and "Повторять" in text
+    assert msg.answer.call_args.kwargs["reply_markup"] is not None
+
+    cb = make_callback()
+    await h.on_repeat(cb, h.RepeatCb(value="none"), state, **_only(ctx, "db", "reminders", "tz"))
+    [r] = db.list_pending(OWNER)
+    assert (r.task, r.remind_at) == ("лимиты клода", now + timedelta(minutes=2))
+    assert f"reminder-{r.id}" in aps.jobs
+
+
+async def test_new_task_with_time_skips_when_question(state, ctx, now):
+    """B2."""
+    await h.start_create(make_message(h.CREATE_BUTTON), state)
+    msg = make_message("через 2 минуты напомни про лимиты клода")
+    await h.on_task(msg, state, tz=TZ, clock=ctx["clock"])
+    assert await state.get_state() == h.CreateReminder.repeat.state
+    data = await state.get_data()
+    assert data["task"] == "лимиты клода"
+    assert datetime.fromisoformat(data["remind_at"]) == now + timedelta(minutes=2)
+    assert "Когда" not in sent_texts(msg.answer)[0]
+
+
+async def test_new_task_without_time_asks_when(state, ctx):
+    """B3."""
+    await state.set_state(h.CreateReminder.task)
+    msg = make_message("купить хлеб")
+    await h.on_task(msg, state, tz=TZ, clock=ctx["clock"])
+    assert await state.get_state() == h.CreateReminder.time.state
+    assert (await state.get_data())["task"] == "купить хлеб"
+    assert "Когда" in sent_texts(msg.answer)[0]
+
+
+async def test_time_without_task_then_task(state, ctx, now):
+    """B4: «напомни через 5 минут» → «О чём?» → задача → повтор, время сохранено."""
+    msg = make_message("напомни через 5 минут")
+    await _free(msg, state, ctx)
+    assert await state.get_state() == h.CreateReminder.task.state
+    assert "О чём" in sent_texts(msg.answer)[0]
+
+    msg2 = make_message("размяться")
+    await h.on_task(msg2, state, tz=TZ, clock=ctx["clock"])
+    assert await state.get_state() == h.CreateReminder.repeat.state
+    data = await state.get_data()
+    assert data["task"] == "размяться"
+    assert datetime.fromisoformat(data["remind_at"]) == now + timedelta(minutes=5)
+
+
+async def test_free_text_falls_back_to_gemini(state, ctx, now):
+    """B5: regex не нашёл время → Gemini с подписью «Текстовая команда»."""
+    from services.intent import ParsedReminder
+
+    when = datetime(2026, 11, 13, 19, 0, tzinfo=TZ)
+    intent = _intent(ParsedReminder("купить хлеб", when, Repeat.NONE))
+    msg = make_message("напомни купить хлеб в пятницу вечером")
+    await _free(msg, state, ctx, intent)
+    args, kwargs = intent.parse.call_args
+    assert args[0] == "напомни купить хлеб в пятницу вечером"
+    assert kwargs["kind"] == "Текстовая команда"
+    assert await state.get_state() == h.CreateReminder.repeat.state
+    data = await state.get_data()
+    assert (data["task"], datetime.fromisoformat(data["remind_at"])) == ("купить хлеб", when)
+    status = msg.answer.return_value
+    assert "Повторять" in sent_texts(status.edit_text)[-1]
+
+
+async def test_free_text_gemini_error(state, ctx, db):
+    """B6."""
+    from services.intent import IntentError
+
+    msg = make_message("напомни когда-нибудь купить хлеб")
+    await _free(msg, state, ctx, _intent(error=IntentError("Не понял, когда напомнить.")))
+    assert await state.get_state() is None
+    assert db.list_pending(OWNER) == []
+    text = sent_texts(msg.answer.return_value.edit_text)[-1]
+    assert "/new" in text and "через 20 мин" in text
+
+
+async def test_free_text_gemini_network_error(state, ctx):
+    msg = make_message("напомни когда-нибудь купить хлеб")
+    await _free(msg, state, ctx, _intent(error=RuntimeError("503")))
+    assert await state.get_state() is None
+    assert "/new" in sent_texts(msg.answer.return_value.edit_text)[-1]
+
+
+async def test_free_text_past_time(state, ctx):
+    """E8 в боте: понятная ошибка, состояние не меняется."""
+    msg = make_message("сегодня 10:00 напомни выпить кофе")
+    await _free(msg, state, ctx)
+    assert await state.get_state() is None
+    assert "прошл" in sent_texts(msg.answer)[0]
+
+
+async def test_free_text_html_escaped(state, ctx):
+    """B9."""
+    msg = make_message("через 2 мин напомни про <b>")
+    await _free(msg, state, ctx)
+    assert "«&lt;b&gt;»" in sent_texts(msg.answer)[0]
