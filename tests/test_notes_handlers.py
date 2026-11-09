@@ -203,3 +203,14 @@ async def test_r4_more_failure_resets_flag(db):
     except RuntimeError:
         pass
     assert db.get_note(nid).detailed is False
+
+
+async def test_m2_delete_ambiguous_keeps_db(db):
+    from digest.errors import NoteAmbiguous
+
+    nid = _note(db)
+    vault = _vault()
+    vault.delete = AsyncMock(side_effect=NoteAmbiguous("Нашёл несколько заметок с этой ссылкой"))
+    cb, _, _ = await _press(db, "del_yes", nid, vault=vault)
+    assert db.get_note(nid) is not None
+    assert "несколько заметок" in sent_texts(cb.message.reply)[-1]

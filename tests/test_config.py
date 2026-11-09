@@ -107,3 +107,21 @@ def test_c1_fallback_model(monkeypatch):
     assert Settings(_env_file=None).gemini_fallback_model == "gemini-3.1-flash-lite"
     monkeypatch.setenv("GEMINI_FALLBACK_MODEL", "")
     assert Settings(_env_file=None).gemini_fallback_model == ""
+
+
+def test_m3_gemini_models_log(monkeypatch):
+    from config import gemini_models_log
+
+    monkeypatch.setenv("BOT_TOKEN", "1:x")
+    monkeypatch.setenv("OWNER_ID", "1")
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-old")
+    monkeypatch.delenv("GEMINI_FALLBACK_MODEL", raising=False)
+    s = Settings(_env_file=None)
+    lines = gemini_models_log(s, {"GEMINI_MODEL": "gemini-old"})
+    assert lines[0] == "Gemini: основная gemini-old, запасная gemini-3.1-flash-lite"
+    assert any("GEMINI_MODEL" in line and "окружения" in line for line in lines[1:])
+
+    s = Settings(_env_file=None, gemini_model="m", gemini_fallback_model="")
+    assert gemini_models_log(s, {}) == ["Gemini: основная m, запасная выключена"]
+    s = Settings(_env_file=None, gemini_model="m", gemini_fallback_model="m")
+    assert gemini_models_log(s, {}) == ["Gemini: основная m, запасная выключена (как основная)"]

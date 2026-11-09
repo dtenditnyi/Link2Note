@@ -18,7 +18,8 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
-from digest.errors import NoteNotFound, VaultError
+from digest.classifier import normalize
+from digest.errors import NoteAmbiguous, NoteNotFound, VaultError
 
 log = logging.getLogger(__name__)
 
@@ -259,15 +260,24 @@ class Vault:
         path = self.dir / f"{name}.md"
         if path.is_file():
             return path
+        # Ссылки сравниваем по ключу: в заметке и в базе одна ссылка бывает в разных формах
+        # (Reels с ?dlrf=…, youtu.be и watch?v=).
+        key = normalize(url)
         found = []
         for candidate in sorted(self.repo.rglob("*.md")):
             if ".git" in candidate.relative_to(self.repo).parts or candidate.stem in skip:
                 continue
             fm = frontmatter(_read(candidate))
-            if fm and fm.get("type") == "digest" and fm.get("url") == url:
+            if fm and fm.get("type") == "digest" and fm.get("url") and normalize(fm["url"]) == key:
                 found.append(candidate)
         if len(found) == 1:
             return found[0]
+        if found:
+            names = ", ".join(f"«{p.stem}»" for p in found)
+            raise NoteAmbiguous(
+                f"Нашёл несколько заметок с этой ссылкой: {names} — не знаю, какую.",
+                note_name=None,
+            )
         raise NoteNotFound(
             f"Не нашёл заметку «{name}» в хранилище — удалена или ссылка в ней изменена?",
             note_name=None,

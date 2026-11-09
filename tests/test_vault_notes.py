@@ -6,7 +6,7 @@ from datetime import date
 
 import pytest
 
-from digest.errors import NoteNotFound, VaultError
+from digest.errors import NoteAmbiguous, NoteNotFound, VaultError
 from digest.vault import UnreadNote
 from tests.test_vault import (  # noqa: F401 — фикстуры
     DAY,
@@ -162,7 +162,7 @@ async def test_r1_url_fallback_skips_other_known_notes(vault, remote):
 async def test_r1_url_fallback_ambiguous_raises(vault, clone, remote, tmp_path):
     await vault.save("A", note_md(), DAY)
     await vault.save("B", note_md(), DAY)
-    with pytest.raises(NoteNotFound):
+    with pytest.raises(NoteAmbiguous):  # несколько совпадений — не угадываем
         await vault.set_status("2026-11-09 Нет", URL, "read")
 
 
@@ -183,3 +183,39 @@ async def test_r6_commit_failure_restores_file(vault, clone, monkeypatch):
     assert info.value.note_name is None  # ничего не закоммичено
     assert (clone / FOLDER / f"{name}.md").exists()
     assert git(clone, "status", "--porcelain").strip() == ""
+
+
+# --- Ручная проверка: url сравнивается по нормализованному ключу; неоднозначность ----------
+
+REEL_FM = "https://www.instagram.com/reel/DfUt20Vhliy/?dlrf=MzQydDA1Njh4eDdk"
+REEL_DB = "https://www.instagram.com/reel/DfUt20Vhliy/"
+
+
+async def test_m1_renamed_reel_found_by_normalized_url(vault, remote, tmp_path):
+    name = await vault.save("Рилс", note_md(url=REEL_FM), DAY)
+    other = tmp_path / "other"
+    clone_repo(remote, other)
+    git(other, "mv", f"{FOLDER}/{name}.md", f"{FOLDER}/Мой рилс.md")
+    git(other, "commit", "-q", "-m", "rename")
+    git(other, "push", "-q")
+    assert await vault.set_status(name, REEL_DB, "read") == "Мой рилс"
+
+
+async def test_m1_youtube_url_forms_match(vault):
+    vid = "dQw4w9WgXcQ"
+    await vault.save("Видео", note_md(url=f"https://www.youtube.com/watch?v={vid}"), DAY)
+    got = await vault.set_status("Старое имя", f"https://youtu.be/{vid}?si=x", "read")
+    assert got == "2026-11-09 Видео"
+
+
+async def test_m2_ambiguous_lists_names(vault):
+    await vault.save("A", note_md(), DAY)
+    await vault.save("B", note_md(), DAY)
+    with pytest.raises(NoteAmbiguous) as info:
+        await vault.delete("2026-11-09 Нет", URL)
+    text = str(info.value)
+    assert "несколько заметок с этой ссылкой" in text
+    assert "2026-11-09 A" in text and "2026-11-09 B" in text
+    assert "не знаю, какую" in text
+    assert not isinstance(info.value, NoteNotFound)  # «Удалить» не должен счесть файл удалённым
+    assert info.value.note_name is None

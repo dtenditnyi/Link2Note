@@ -17,6 +17,10 @@ class NoteNotFound(VaultError):
     """Заметки нет ни под своим именем, ни по url во frontmatter (удалена или ушла из хранилища)."""
 
 
+class NoteAmbiguous(VaultError):
+    """По url нашлось несколько заметок — не угадываем, какую менять. Это не «файла нет»."""
+
+
 class VideoUnreadable(DigestError):
     """Gemini не смог открыть само видео (400/403/404, FAILED в Files API) — не перегрузка.
 

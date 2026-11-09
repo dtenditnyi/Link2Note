@@ -1,5 +1,6 @@
 """Все настройки бота — из переменных окружения / .env (pydantic-settings)."""
 
+from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -66,6 +67,27 @@ class Settings(BaseSettings):
     @property
     def timezone(self) -> ZoneInfo:
         return ZoneInfo(self.tz)
+
+
+def gemini_models_log(s: Settings, environ: Mapping[str, str]) -> list[str]:
+    """Строки для лога при старте: какие модели Gemini реально в работе и откуда они.
+
+    Переменная окружения процесса перекрывает .env (pydantic-settings) — например, старый
+    GEMINI_MODEL, оставшийся в терминале VS Code.
+    """
+    if not s.gemini_fallback_model:
+        fallback = "выключена"
+    elif s.gemini_fallback_model == s.gemini_model:
+        fallback = "выключена (как основная)"
+    else:
+        fallback = s.gemini_fallback_model
+    lines = [f"Gemini: основная {s.gemini_model}, запасная {fallback}"]
+    for var in ("GEMINI_MODEL", "GEMINI_FALLBACK_MODEL"):
+        if var in environ:
+            lines.append(
+                f"{var}={environ[var]!r} взят из переменной окружения процесса (перекрывает .env)"
+            )
+    return lines
 
 
 @lru_cache

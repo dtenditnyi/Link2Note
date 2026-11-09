@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import logging
+import os
 import sys
 from datetime import datetime, timedelta, tzinfo
 
@@ -11,7 +12,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
-from config import get_settings
+from config import gemini_models_log, get_settings
 from database import Database
 from digest.fetchers import VideoOptions, cookies_warning
 from digest.llm import DigestLLM
@@ -75,6 +76,8 @@ def build_dispatcher(
 async def main() -> None:
     settings = get_settings()
     tz = settings.timezone
+    for i, line in enumerate(gemini_models_log(settings, os.environ)):
+        (log.info if i == 0 else log.warning)(line)
 
     db = Database(settings.db_path)
     db.init()
