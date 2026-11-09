@@ -16,7 +16,7 @@ from handlers import keyboards as kb
 from handlers.keyboards import CREATE_BUTTON, LIST_BUTTON, ReminderCb, RepeatCb, SnoozeCb
 from handlers.utils import edit_text, remove_markup
 from scheduler import ReminderScheduler
-from services.intent import IntentError, IntentParser
+from services.intent import IntentError, IntentParser, LLMUnavailableError
 from services.text_reminder import has_trigger, parse_text_reminder
 from services.timeparse import (
     FORMATS_HELP,
@@ -31,6 +31,10 @@ __all__ = ["CREATE_BUTTON", "LIST_BUTTON", "ReminderCb", "RepeatCb", "SnoozeCb",
 
 log = logging.getLogger(__name__)
 router = Router(name="reminders")
+RETRY_STAGE_TEXT = {
+    "busy": "<i>⏳ Gemini сейчас перегружен, пробую ещё раз…</i>",
+    "fallback": "<i>⏳ Gemini всё ещё перегружен, пробую запасную модель…</i>",
+}
 FREE_TEXT_HINT = (
     "Напиши время цифрами, например «через 20 мин напомни выпить воды» "
     "или «завтра в 9:00 напомни позвонить», — или создай через /new."
@@ -118,7 +122,17 @@ async def on_free_text(
 
     status = await message.answer("<i>🤔 Разбираю…</i>")
     try:
-        result = await intent.parse(text, None, now, kind="Текстовая команда")
+
+        async def on_retry(stage: str) -> None:
+            await status.edit_text(RETRY_STAGE_TEXT[stage])
+
+        result = await intent.parse(text, None, now, kind="Текстовая команда", on_retry=on_retry)
+    except LLMUnavailableError as err:
+        await status.edit_text(
+            f"Gemini сейчас недоступен ({escape(str(err))}), а время в тексте я не нашёл.\n\n"
+            f"{FREE_TEXT_HINT}"
+        )
+        return
     except IntentError as err:
         await status.edit_text(f"{escape(str(err))}\n\n{FREE_TEXT_HINT}")
         return

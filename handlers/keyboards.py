@@ -35,6 +35,10 @@ class VoiceCb(CallbackData, prefix="voice"):
     mid: int  # message_id сообщения с черновиком
 
 
+class VoiceRetryCb(CallbackData, prefix="vretry"):
+    mid: int  # message_id сообщения «Я услышал»
+
+
 def main_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text=CREATE_BUTTON), KeyboardButton(text=LIST_BUTTON)]],
@@ -102,3 +106,7 @@ def voice_confirm(mid: int) -> InlineKeyboardMarkup:
             ]
         ]
     )
+
+
+def voice_retry(mid: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[_button("🔁 Повторить", VoiceRetryCb(mid=mid))]])

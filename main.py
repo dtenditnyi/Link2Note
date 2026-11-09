@@ -16,7 +16,7 @@ from handlers import reminders as reminders_handlers
 from handlers.middlewares import setup_owner_filter
 from scheduler import ReminderScheduler
 from services.context import ContextMemory
-from services.drafts import DraftStore
+from services.drafts import DraftStore, TranscriptStore
 from services.intent import IntentParser
 from services.transcribe import Transcriber
 
@@ -39,6 +39,7 @@ def build_dispatcher(
         intent=intent,
         memory=memory,
         drafts=DraftStore(),
+        transcripts=TranscriptStore(),
         tz=tz,
         clock=lambda: datetime.now(tz),
         voice_max_seconds=voice_max_seconds,
@@ -65,7 +66,13 @@ async def main() -> None:
         transcriber=Transcriber(
             settings.whisper_model, settings.whisper_device, settings.whisper_compute_type
         ),
-        intent=IntentParser(settings.gemini_api_key, settings.gemini_model, tz),
+        intent=IntentParser(
+            settings.gemini_api_key,
+            settings.gemini_model,
+            tz,
+            fallback_model=settings.gemini_fallback_model,
+            timeout_s=settings.gemini_timeout_s,
+        ),
         memory=ContextMemory(ttl=timedelta(minutes=15)),
         tz=tz,
         voice_max_seconds=settings.voice_max_seconds,

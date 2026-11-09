@@ -46,6 +46,7 @@ def test_workflow_data_injected(dp):
         "intent",
         "memory",
         "drafts",
+        "transcripts",
         "tz",
         "clock",
         "voice_max_seconds",

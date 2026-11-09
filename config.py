@@ -16,6 +16,8 @@ class Settings(BaseSettings):
 
     gemini_api_key: str = ""
     gemini_model: str = "gemini-3.8-flash"
+    gemini_fallback_model: str = ""  # пусто — запасная модель выключена
+    gemini_timeout_s: int = 20
 
     tz: str = "Europe/Bucharest"
     db_path: Path = Path("data/link2note.db")

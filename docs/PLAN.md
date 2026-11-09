@@ -535,6 +535,8 @@ BOT_TOKEN=...
 OWNER_ID=123456789               # мой Telegram ID (узнать у @userinfobot)
 GEMINI_API_KEY=...               # aistudio.google.com → Get API key
 GEMINI_MODEL=gemini-3.8-flash
+GEMINI_FALLBACK_MODEL=           # запасная модель при 503/429 (пусто — выключена)
+GEMINI_TIMEOUT_S=20              # таймаут одного запроса к Gemini
 LLM_PROVIDER=gemini
 VAULT_REPO=/vault                # клон репозитория хранилища внутри контейнера
 COOKIES_FILE=/secrets/instagram_cookies.txt
@@ -572,6 +574,7 @@ services:
 - [x] Напоминания: создание / список / изменить / удалить, отложить и «Готово», ежедневные и еженедельные
 - [x] Относительное время текстом («через 20 мин», «завтра 9:00»)
 - [x] Время прямо из фразы: «через 2 минуты напомни про лимиты» — в `/new` и свободным текстом, запасной путь через Gemini ([спецификация](specs/text-time-extraction.md))
+- [x] Устойчивость к 503/429/таймаутам Gemini: ретраи SDK, запасная модель, наш парсер, «Я услышал» + «Повторить» ([спецификация](specs/gemini-resilience.md))
 - [x] Голос: faster-whisper `small` (ленивая загрузка, вне event loop) → Gemini → подтверждение
 - [x] Текст без ссылок — тихий контекст к голосовому; ссылки оставлены для Link2Note
 - [x] Dockerfile (Python 3.12 + uv), docker-compose без ollama

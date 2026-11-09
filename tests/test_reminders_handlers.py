@@ -438,3 +438,35 @@ async def test_free_text_html_escaped(state, ctx):
     msg = make_message("через 2 мин напомни про <b>")
     await _free(msg, state, ctx)
     assert "«&lt;b&gt;»" in sent_texts(msg.answer)[0]
+
+
+async def test_free_text_gemini_unavailable(state, ctx):
+    """O5: свободный текст без времени, Gemini недоступен → понятная подсказка, без падения."""
+    from services.intent import LLMUnavailableError
+
+    msg = make_message("напомни когда-нибудь купить хлеб")
+    await _free(msg, state, ctx, _intent(error=LLMUnavailableError("503 UNAVAILABLE")))
+    assert await state.get_state() is None
+    text = sent_texts(msg.answer.return_value.edit_text)[-1]
+    assert "Gemini сейчас недоступен" in text and "/new" in text
+
+
+async def test_free_text_busy_and_fallback_statuses_differ(state, ctx, now):
+    """Повторная одинаковая правка → Telegram «message is not modified»; тексты этапов разные."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from services.intent import ParsedReminder
+
+    async def parse(text, context, now_, **kwargs):
+        await kwargs["on_retry"]("busy")
+        await kwargs["on_retry"]("fallback")
+        return ParsedReminder("купить хлеб", now + timedelta(days=1), Repeat.NONE)
+
+    intent = MagicMock()
+    intent.parse = AsyncMock(side_effect=parse)
+    msg = make_message("напомни купить хлеб в пятницу вечером")
+    await _free(msg, state, ctx, intent)
+    texts = sent_texts(msg.answer.return_value.edit_text)
+    assert len(texts) == 3
+    assert texts[0] != texts[1]
+    assert "запасную модель" in texts[1]
