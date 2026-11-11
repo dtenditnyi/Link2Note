@@ -17,7 +17,7 @@ if [ "$(health_status)" = "missing" ] || [ -z "$(compose ps -q --status running 
 else
     compose exec -T "$SERVICE" /app/.venv/bin/python -m digest.admin backup "$tmp_in_container"
 fi
-as_root mv "$APP_DIR/data/$(basename "$tmp_in_container")" "$BACKUP_DIR/$name"
+as_root mv "$DATA_DIR/$(basename "$tmp_in_container")" "$BACKUP_DIR/$name"
 as_root chown "$(id -u):$(id -g)" "$BACKUP_DIR/$name"
 chmod 600 "$BACKUP_DIR/$name"
 ok "Бэкап: backups/$name ($(du -h "$BACKUP_DIR/$name" | cut -f1))"

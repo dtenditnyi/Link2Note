@@ -8,6 +8,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import signal
 import sys
 from datetime import datetime, timedelta, tzinfo
 
@@ -284,7 +285,13 @@ async def main() -> None:
 
 
 def run() -> None:
-    """Ctrl+C: воркер отменён в finally (задача остаётся в очереди) — выходим без трейсбека."""
+    """Ctrl+C: воркер отменён в finally (задача остаётся в очереди) — выходим без трейсбека.
+
+    SIGTERM (`docker stop`) — так же, как Ctrl+C: в контейнере бот — PID 1, а у PID 1 сигнал
+    без обработчика игнорируется, и Docker через 10 с убивал бы процесс SIGKILL без finally.
+    """
+    if hasattr(signal, "SIGTERM"):
+        signal.signal(signal.SIGTERM, signal.default_int_handler)
     try:
         asyncio.run(main())
     except KeyboardInterrupt:

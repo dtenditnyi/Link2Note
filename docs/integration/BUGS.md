@@ -18,3 +18,9 @@
 - Симптом: (найдено при написании стресс-теста) повтор с тем же ключом, пока первый запрос ещё выполняется, давал `_Conflict`, не `VaultError` → лог `exception` вместо обычного повтора.
 - Исправление: `_Conflict` — подкласс `VaultUnavailable`; в контракте отдельный код `in_progress`.
 - Регрессия: `tests/test_outbox_scenarios.py::test_stress_random_faults` (сбой `409` в наборе), `test_timeout_late_write_no_duplicate`.
+
+### B04 — `docker stop` убивал бота SIGKILL без штатной остановки
+- Симптом (проверка F5 в Docker): SIGTERM от `docker stop` игнорировался, через 10 с — SIGKILL; `finally` в `main()` не выполнялся (воркер не отпускал задачу, outbox не останавливался).
+- Причина: в контейнере бот — PID 1, а сигнал без обработчика PID 1 игнорирует.
+- Исправление: `main.run()` ставит на SIGTERM `signal.default_int_handler` — как Ctrl+C. Проверено: `docker stop` — 1 с, в логе «Бот остановлен», exit 0.
+- Регрессия: `tests/test_main_signals.py`.

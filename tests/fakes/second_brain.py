@@ -102,6 +102,7 @@ class FakeSecondBrain:
         ai: bool = True,
         port: int = 0,
         timeout_delay: float = 3.0,
+        host: str = "127.0.0.1",
     ):
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
@@ -110,6 +111,7 @@ class FakeSecondBrain:
         self.delete_paths = delete_paths
         self.ai = ai
         self.port = port
+        self.host = host
         self.timeout_delay = timeout_delay
         self.allowed_tags = _allowed_tags()
         self.tasks: list[dict[str, Any]] = []
@@ -155,7 +157,7 @@ class FakeSecondBrain:
         r.add_post(f"{PREFIX}/ask", self._ask)
         runner = web.AppRunner(app, shutdown_timeout=0.2, access_log=None)
         await runner.setup()
-        site = web.TCPSite(runner, "127.0.0.1", self.port)
+        site = web.TCPSite(runner, self.host, self.port)
         await site.start()
         if not self.port:
             self.port = runner.addresses[0][1]
@@ -571,3 +573,21 @@ class FakeSecondBrain:
         return web.json_response(
             {"answer_markdown": self.ask_answer, "sources": sources, "model": "fake-model"}
         )
+
+
+async def _serve() -> None:
+    """Отдельным процессом (проверка деплоя в docker): FAKE_SB_TOKEN, порт 8000, все интерфейсы."""
+    import os
+    import tempfile
+
+    root = Path(os.environ.get("FAKE_SB_ROOT") or tempfile.mkdtemp(prefix="fake_sb_"))
+    srv = FakeSecondBrain(
+        root, token=os.environ.get("FAKE_SB_TOKEN", "sb-test-token-5f2a"), host="0.0.0.0", port=8000
+    )
+    await srv.start()
+    print(f"fake Second Brain on :8000, vault {root}", flush=True)
+    await asyncio.Event().wait()
+
+
+if __name__ == "__main__":
+    asyncio.run(_serve())

@@ -9,7 +9,7 @@ cd "$APP_DIR"
 src="${1:-}"
 [ -n "$src" ] || die "Укажи файл: ./deploy/restore.sh backups/link2note-….db.gz [--yes]"
 [ -f "$src" ] || die "Нет файла $src"
-db="$APP_DIR/data/link2note.db"
+db="$DATA_DIR/link2note.db"
 
 if [ "${2:-}" != "--yes" ]; then
     printf 'Заменить %s содержимым %s? Бот будет остановлен. Напиши yes: ' "$db" "$src"

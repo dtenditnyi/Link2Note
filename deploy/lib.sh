@@ -3,9 +3,11 @@
 # Каждый скрипт пишет свой лог в deploy/logs/<скрипт>-YYYYmmdd-HHMMSS.log.
 
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-LOG_DIR="$APP_DIR/deploy/logs"
-BACKUP_DIR="$APP_DIR/backups"
-ENV_FILE="$APP_DIR/.env"
+# Пути можно переопределить окружением (проверка скриптов на тестовом compose-проекте).
+LOG_DIR="${LOG_DIR:-$APP_DIR/deploy/logs}"
+DATA_DIR="${DATA_DIR:-$APP_DIR/data}"
+BACKUP_DIR="${BACKUP_DIR:-$APP_DIR/backups}"
+ENV_FILE="${ENV_FILE:-$APP_DIR/.env}"
 SERVICE="bot"
 APP_UID=1000
 HEALTH_TIMEOUT_S="${HEALTH_TIMEOUT_S:-300}"
@@ -23,7 +25,12 @@ warn() { printf '\033[1;33m[!]\033[0m %s\n' "$*"; }
 die()  { printf '\033[1;31m[✗]\033[0m %s\n' "$*" >&2; exit 1; }
 
 as_root() {
-    if [ "$(id -u)" -eq 0 ]; then "$@"; else sudo "$@"; fi
+    # NO_SUDO=1 — проверка скриптов без root (тестовый compose-проект на ПК).
+    if [ "$(id -u)" -eq 0 ] || [ "${NO_SUDO:-0}" = 1 ] || ! command -v sudo >/dev/null 2>&1; then
+        "$@"
+    else
+        sudo "$@"
+    fi
 }
 
 compose() {

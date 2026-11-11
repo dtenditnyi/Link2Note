@@ -26,3 +26,6 @@ GOALS.md (26 целей), DECISIONS D1–D12, `tests/acceptance/test_stage5.py`:
 
 ### 2026-11-11 — G-0 — перенос из gemini-resilience
 Голосовое при перегрузке Gemini (429/5xx после запасной): наш парсер времени → черновик «(разобрал без Gemini)»; не нашёл → «🎧 Я услышал…» + «🔁 Повторить» (`TextStore`, 6 ч, без повторного Whisper). Варианты → D1. Тесты: `tests/test_voice_outage.py` 5 passed.
+
+### 2026-11-11 — G-F1…F5, G-G1 — сервер и живая проверка
+compose (сеть `secondbrain`, ротация логов, URL сайта из имени контейнера), `deploy/*.sh`, systemd, `digest/admin.py`, `docs/DEPLOY.md`, `scripts/check_second_brain_api.py` (15 проверок, прогнан против фейка + негативный тест). F5 вживую в Docker Desktop — `F5-docker-check.md`; найден и исправлен B04 (SIGTERM). Полный набор: 836 passed.
