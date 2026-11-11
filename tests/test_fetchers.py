@@ -618,3 +618,140 @@ async def test_h3_retry_low_level_curl_error(monkeypatch):
     async with _page(status=403) as c:
         with pytest.raises(DigestError, match="(?i)не смог открыть"):
             await fetch_article(ARTICLE_URL, c)
+
+
+# --- ffmpeg: склейка дорожек и запасной формат (F1–F7) --------------------------------------
+
+from digest.fetchers import (  # noqa: E402
+    AUDIO_FORMAT,
+    NO_FFMPEG_FORMAT,
+    VIDEO_FORMAT,
+    FFmpeg,
+    download_audio,
+    ffmpeg_status,
+    find_ffmpeg,
+)
+
+SYSTEM = FFmpeg("/usr/bin/ffmpeg", bundled=False)
+BUNDLED = FFmpeg(r"C:\venv\imageio_ffmpeg\binaries\ffmpeg-win-x86_64-v7.1.exe", bundled=True)
+
+
+@pytest.fixture
+def no_cache():
+    find_ffmpeg.cache_clear()
+    yield
+    find_ffmpeg.cache_clear()
+
+
+def test_f1_find_system_ffmpeg_first(monkeypatch, no_cache):
+    monkeypatch.setattr(fetchers.shutil, "which", lambda name: "/usr/bin/ffmpeg")
+    monkeypatch.setattr(fetchers, "_bundled_ffmpeg", lambda: pytest.fail("не нужен"))
+    assert find_ffmpeg() == SYSTEM
+
+
+def test_f2_find_bundled_when_not_in_path(monkeypatch, no_cache):
+    monkeypatch.setattr(fetchers.shutil, "which", lambda name: None)
+    monkeypatch.setattr(fetchers, "_bundled_ffmpeg", lambda: BUNDLED.path)
+    assert find_ffmpeg() == BUNDLED
+
+
+def test_f3_find_nothing(monkeypatch, no_cache):
+    monkeypatch.setattr(fetchers.shutil, "which", lambda name: None)
+    monkeypatch.setattr(fetchers, "_bundled_ffmpeg", lambda: None)
+    assert find_ffmpeg() is None
+
+
+def test_f3_bundled_runtime_error_is_none(monkeypatch):
+    import sys
+    import types
+
+    fake = types.ModuleType("imageio_ffmpeg")
+
+    def boom():
+        raise RuntimeError("No ffmpeg exe could be found")
+
+    fake.get_ffmpeg_exe = boom
+    monkeypatch.setitem(sys.modules, "imageio_ffmpeg", fake)
+    assert fetchers._bundled_ffmpeg() is None
+    monkeypatch.setitem(sys.modules, "imageio_ffmpeg", None)  # пакет не установлен
+    assert fetchers._bundled_ffmpeg() is None
+
+
+async def test_f1_system_ffmpeg_keeps_format(tmp_path):
+    await download_video(REEL, tmp_path, VideoOptions(ffmpeg=SYSTEM), ydl_factory=_factory())
+    opts = FakeYDL.instances[0].opts
+    assert opts["format"] == VIDEO_FORMAT
+    assert "ffmpeg_location" not in opts
+
+
+async def test_f2_bundled_ffmpeg_passed_to_ytdlp(tmp_path):
+    await download_video(REEL, tmp_path, VideoOptions(ffmpeg=BUNDLED), ydl_factory=_factory())
+    opts = FakeYDL.instances[0].opts
+    assert opts["format"] == VIDEO_FORMAT
+    assert opts["ffmpeg_location"] == BUNDLED.path
+
+
+async def test_f3_no_ffmpeg_single_file_format(tmp_path):
+    path, _ = await download_video(
+        REEL, tmp_path, VideoOptions(ffmpeg=None), ydl_factory=_factory()
+    )
+    opts = FakeYDL.instances[0].opts
+    assert opts["format"] == NO_FFMPEG_FORMAT == "b[height<=720]/best[ext=mp4]/best"
+    assert "+" not in opts["format"]
+    assert path.is_file()
+
+
+async def test_f4_no_ffmpeg_and_no_single_file(tmp_path):
+    err = DownloadError("ERROR: [instagram] C1abc: Requested format is not available.")
+    with pytest.raises(DigestError, match="ffmpeg"):
+        await download_video(
+            REEL, tmp_path, VideoOptions(ffmpeg=None), ydl_factory=_factory(error=err)
+        )
+
+
+async def test_f4_format_error_with_ffmpeg_is_plain(tmp_path):
+    err = DownloadError("ERROR: [instagram] C1abc: Requested format is not available.")
+    with pytest.raises(DigestError) as info:
+        await download_video(
+            REEL, tmp_path, VideoOptions(ffmpeg=SYSTEM), ydl_factory=_factory(error=err)
+        )
+    assert "ffmpeg" not in str(info.value)
+
+
+async def test_f5_no_color_and_ansi_stripped(tmp_path):
+    err = DownloadError(
+        "\x1b[0;31mERROR:\x1b[0m [Instagram] DXTTbK8AZl2: You have requested merging of "
+        "multiple formats but ffmpeg is not installed. Aborting due to --abort-on-error"
+    )
+    with pytest.raises(DigestError) as info:
+        await download_video(
+            REEL, tmp_path, VideoOptions(ffmpeg=SYSTEM), ydl_factory=_factory(error=err)
+        )
+    text = str(info.value)
+    assert "\x1b" not in text and "[0;31m" not in text and "[0m" not in text
+    assert "ERROR" not in text
+    assert text.startswith("Не смог скачать видео: [Instagram] DXTTbK8AZl2: You have requested")
+    assert FakeYDL.instances[0].opts["color"] == {"stdout": "no_color", "stderr": "no_color"}
+
+
+def test_f6_ffmpeg_status():
+    assert ffmpeg_status(SYSTEM) == "ffmpeg: системный /usr/bin/ffmpeg"
+    assert ffmpeg_status(BUNDLED) == f"ffmpeg: из imageio-ffmpeg {BUNDLED.path}"
+    assert ffmpeg_status(None) == (
+        "ffmpeg не найден — видео качаю одним файлом (без склейки дорожек)"
+    )
+
+
+async def test_f7_audio_format_unchanged_without_ffmpeg(tmp_path):
+    info = {"id": "a1", "ext": "m4a", "title": "t", "duration": 10}
+    await download_audio(
+        URL, tmp_path, VideoOptions(ffmpeg=None), max_seconds=1800,
+        ydl_factory=_factory(info=info),
+    )  # fmt: skip
+    assert FakeYDL.instances[0].opts["format"] == AUDIO_FORMAT
+
+
+@pytest.fixture(autouse=True)
+def _ffmpeg_in_path(monkeypatch):
+    """VideoOptions() по умолчанию ищет ffmpeg на машине — в тестах он «системный» всегда."""
+    monkeypatch.setattr(fetchers, "find_ffmpeg", lambda: SYSTEM)
