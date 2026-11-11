@@ -22,4 +22,7 @@ RUN mkdir -p /app/data /home/botuser/.cache/huggingface \
     && chown -R botuser:botuser /app /home/botuser/.cache
 
 USER botuser
+# Бот раз в 30 с пишет data/heartbeat из своего event loop; завис loop — файл стареет → unhealthy.
+HEALTHCHECK --interval=60s --timeout=10s --start-period=120s --retries=3 \
+    CMD ["/app/.venv/bin/python", "-m", "services.heartbeat", "/app/data/heartbeat", "120"]
 CMD ["/app/.venv/bin/python", "main.py"]

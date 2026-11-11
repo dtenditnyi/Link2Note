@@ -15,3 +15,5 @@ legacy/
 tests/
 docs/
 *.db
+backups/
+deploy/logs/

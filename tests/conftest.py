@@ -109,3 +109,25 @@ def sent_texts(mock) -> list[str]:
         elif "text" in call.kwargs:
             out.append(call.kwargs["text"])
     return out
+
+
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", None}
+
+
+@pytest.fixture(autouse=True)
+def _no_internet(monkeypatch):
+    """Сеть в тестах — только localhost (фейковый Second Brain). Любой другой хост — ошибка.
+
+    Ловит случайные живые вызовы Telegram / Gemini / yt-dlp: все они начинают с getaddrinfo.
+    """
+    import socket
+
+    real = socket.getaddrinfo
+
+    def guarded(host, *args, **kwargs):
+        name = host.decode() if isinstance(host, bytes) else host
+        if name not in _LOCAL_HOSTS:
+            raise OSError(f"тесты не ходят в сеть: {name}")
+        return real(host, *args, **kwargs)
+
+    monkeypatch.setattr(socket, "getaddrinfo", guarded)

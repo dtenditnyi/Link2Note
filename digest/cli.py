@@ -16,7 +16,7 @@ import httpx
 from digest.errors import DigestError
 from digest.fetchers import VideoOptions
 from digest.pipeline import WHISPER_MAX_SECONDS, DigestModel, Transcribes, make_note
-from digest.worker import NoteStore
+from digest.vault_base import VaultBackend
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -32,7 +32,7 @@ async def run(
     *,
     llm: DigestModel,
     http: httpx.AsyncClient,
-    vault: NoteStore | None,
+    vault: VaultBackend | None,
     today: date,
     video: VideoOptions | None = None,
     transcriber: Transcribes | None = None,

@@ -1,0 +1,9 @@
+[Unit]
+Description=Link2Note: daily backup at 03:45 (Second Brain backs up at 03:30)
+
+[Timer]
+OnCalendar=*-*-* 03:45:00 Europe/Bucharest
+Persistent=true
+
+[Install]
+WantedBy=timers.target

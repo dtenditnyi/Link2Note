@@ -40,3 +40,6 @@ select = ["E", "F", "I", "B", "UP", "ASYNC"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["config", "database", "main", "scheduler", "digest", "handlers", "services", "tests", "contract"]

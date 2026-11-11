@@ -81,7 +81,12 @@ flowchart LR
 |---|---|---|---|
 | `gemini-3.5-flash-lite` | 500 | 15 | **основная** (`GEMINI_MODEL`) |
 | `gemini-3.1-flash-lite` | 500 | 15 | **запасная** (`GEMINI_FALLBACK_MODEL`) |
-| `gemini-3.8-flash` | 20 | — | не используем: 09.11.2026 упёрлись (RPD 22/20, 429 `GenerateRequestsPerDayPerProjectPerModel-FreeTier`) |
+| `gemini-3.8-flash` | 20 | 5 | только «🔁 Подробнее» (`GEMINI_DETAIL_MODEL`, с 11.11.2026); при 429/5xx — основная |
+| `gemini-3.6-flash` / `3-flash` / `2.5-flash` | 20 | 5 | не используем |
+| Gemma 4 26B/31B | 14 400 | 30 (16K TPM) | не используем: видео не понимает |
+| Pro-модели | 0 | 0 | недоступны на free tier |
+
+С 11.11.2026 у бота **отдельный проект AI Studio** (свой ключ, своя квота; лимиты те же). У Lite-моделей ещё 250K TPM.
 
 Ранняя оценка «~1 500 запросов в день» была неверной. Каждая ссылка — минимум 1 запрос, повторы SDK на 429/503 тоже, вероятно, тратят квоту; 5–10 ссылок в день с запасом укладываются в 500. Lite-модели видео понимают (проверено `count_tokens`), но экранные хоткеи и код могут разбирать хуже — смотреть по качеству конспектов. Точные лимиты — в AI Studio.
 
@@ -630,6 +635,17 @@ _Клон хранилища и deploy key (пункты выше) нужны д
 - [x] Баг 10.11.2026: Reels без ffmpeg на Windows («merging … ffmpeg is not installed») → ffmpeg из PATH или `imageio-ffmpeg` (только Windows) через `ffmpeg_location`, без ffmpeg — формат одним файлом; ANSI-коды убраны из ошибок; какой ffmpeg — в логе при старте. [ ] Reels вживую
 - **Бэклог по перепроверке:** после «нашёл несколько заметок» вернуть под сообщением обычные кнопки вместо «Да, удалить / Нет»; предупреждение про `GEMINI_MODEL` из окружения — только если значение отличается от `.env`
 - **Бэклог:** голосовое-идея → заметка (из раздела 2); дайджест, пропущенный из-за перезапуска бота после 18:00 (задачи APScheduler в памяти); cookies для YouTube, если yt-dlp упрётся в «Sign in to confirm you're not a bot»
+
+### Этап 5 — домашний сервер и Second Brain API (код готов 11.11.2026, ветка `feature/second-brain-integration`; задание: [PROMPT_SECOND_BRAIN_INTEGRATION.md](PROMPT_SECOND_BRAIN_INTEGRATION.md), отчёт: [integration/REPORT.md](integration/REPORT.md))
+- [x] Интерфейс хранилища `VaultBackend`: `GitVault` (как раньше) и API сайта; `VAULT_BACKEND=git|api`
+- [x] Контракт API для сайта ([SECOND_BRAIN_API_CONTRACT.md](SECOND_BRAIN_API_CONTRACT.md)), общие `contract/url_normalize_cases.json` и `allowed_tags.json` (`fun`)
+- [x] `ApiVault` + офлайн-очередь `vault_ops`: сайт выключен — заметки ждут и уходят сами, без дублей и повторного Gemini
+- [x] `/task`, `/note` (`неделя`), `/ask`, `/queue`, `/retry`; голосом «добавь задачу …», «запиши в заметки …»
+- [x] `GEMINI_DETAIL_MODEL` для «Подробнее»; голосовое не теряется при перегрузке Gemini (из `gemini-resilience`)
+- [x] Сервер: compose в общей сети `secondbrain`, healthcheck, `deploy/*.sh`, systemd + бэкап 03:45, [DEPLOY.md](DEPLOY.md); проверено в Docker на ПК (`DRY_RUN`)
+- [ ] Вживую: поставить на сервер (`deploy/install.sh`), перенести базу с ПК
+- [ ] Вживую: токен на сайте → `scripts/check_second_brain_api.py` → `VAULT_BACKEND=api`
+- [ ] Вживую: выключить сайт, прислать ссылку → «📮 в очереди» → включить → заметка одна
 
 ### Этап 4 — второй мозг
 - [ ] Генерация Anki-карточек

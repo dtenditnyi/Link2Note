@@ -13,8 +13,8 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, InaccessibleMessage, InlineKeyboardMarkup, Message
 
 from database import Database, NoteRow
-from digest.errors import NoteNotFound, VaultError
-from digest.vault import Vault
+from digest.errors import NoteNotFound, VaultError, VaultQueued
+from digest.vault_base import VaultBackend
 from digest.weekly import unread_text
 from digest.worker import Job
 from handlers import keyboards as kb
@@ -68,7 +68,7 @@ async def on_note(
     cb: CallbackQuery,
     callback_data: NoteCb,
     db: Database,
-    vault: Vault | None,
+    vault: VaultBackend | None,
     link_queue: asyncio.Queue[Job],
 ) -> None:
     if cb.message is None:  # кнопка из inline-сообщения — у нас таких нет
@@ -125,7 +125,7 @@ async def on_note(
         await cb.answer()
 
 
-async def _read(cb: CallbackQuery, note: NoteRow, db: Database, vault: Vault) -> None:
+async def _read(cb: CallbackQuery, note: NoteRow, db: Database, vault: VaultBackend) -> None:
     try:
         name = await vault.set_status(
             note.note_name, note.url, "read", skip=db.other_note_names(note.id)
@@ -137,15 +137,15 @@ async def _read(cb: CallbackQuery, note: NoteRow, db: Database, vault: Vault) ->
         if not err.note_name:  # не закоммитили — ничего не изменилось
             await _reply(cb, f"❌ {escape(str(err))}")
             return
-        name = err.note_name  # изменена локально, уйдёт со следующим push
-        await _reply(cb, f"⚠️ {escape(str(err))}")
+        name = err.note_name  # изменена локально / ждёт в очереди сайта — уйдёт сама
+        await _reply(cb, _later(err))
     db.mark_read(note.id)
     if name != note.note_name:
         db.rename_note(note.id, name)
     await _set_markup(cb, _actions(note, read=True))
 
 
-async def _delete(cb: CallbackQuery, note: NoteRow, db: Database, vault: Vault) -> None:
+async def _delete(cb: CallbackQuery, note: NoteRow, db: Database, vault: VaultBackend) -> None:
     try:
         await vault.delete(note.note_name, note.url, skip=db.other_note_names(note.id))
         text = f"🗑 Удалено: «{escape(note.note_name)}»"
@@ -155,13 +155,18 @@ async def _delete(cb: CallbackQuery, note: NoteRow, db: Database, vault: Vault) 
         if not err.note_name:
             await _reply(cb, f"❌ {escape(str(err))}")
             return
-        text = f"🗑 Удалено: «{escape(note.note_name)}»\n⚠️ {escape(str(err))}"
+        text = f"🗑 Удалено: «{escape(note.note_name)}»\n{_later(err)}"
     db.delete_note(note.id)
     await edit_text(cb, text)
 
 
+def _later(err: VaultError) -> str:
+    """git: «⚠️ не отправлена в GitHub…»; api: «📮 Сайт недоступен…» (эмодзи уже в тексте)."""
+    return escape(str(err)) if isinstance(err, VaultQueued) else f"⚠️ {escape(str(err))}"
+
+
 @router.message(Command("unread"))
-async def cmd_unread(message: Message, vault: Vault | None) -> None:
+async def cmd_unread(message: Message, vault: VaultBackend | None) -> None:
     if vault is None:
         await message.answer(NO_VAULT)
         return

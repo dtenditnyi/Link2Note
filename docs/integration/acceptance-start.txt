@@ -1,0 +1,7 @@
+..xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.                                        [100%]
+3 passed, 30 xfailed in 8.84s
+Unclosed client session
+client_session: <aiohttp.client.ClientSession object at 0x000002564EF93710>
+Unclosed connector
+connections: ['deque([(<aiohttp.client_proto.ResponseHandler object at 0x000002564F0FD4D0>, 2155.609)])']
+connector: <aiohttp.connector.TCPConnector object at 0x000002564EF913D0>

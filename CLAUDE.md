@@ -5,7 +5,10 @@ Telegram-бот «Посмотрю потом»: я кидаю ссылку (You
 Старый бот-напоминалка (assistant_bot) перенесён на этапе 0 — что и почему поменялось: docs/MIGRATION.md, docs/specs/stage-0-migration.md.
 
 ## Как работать
-**Любую функцию, переделку или перенос делай строго по @docs/WORKFLOW.md:** задача → исследование (код, Context7, интернет) → план с критериями приёмки и моё «ок» → сначала тесты (красные) → код → все тесты + ruff + ревью субагентом → коммит после подтверждения.
+**Любую функцию, переделку или перенос делай строго по @docs/WORKFLOW.md (автономно):** задача → исследование (код, Context7, интернет) → 2–3 варианта решения → выбор и обоснование в `docs/integration/DECISIONS.md` (крупные функции — `docs/specs/…`) → критерии приёмки → тесты (красные) → код → все тесты + ruff + ревью субагентом → коммит сам при зелёных тестах.
+Спрашивать владельца только перед необратимыми действиями вне задания: удаление данных, force push, запись в настоящий `myObsidian`, трата платных ресурсов.
+- Задание этапа 5 — `docs/PROMPT_SECOND_BRAIN_INTEGRATION.md`; после сжатия контекста перечитать его и `docs/integration/STATUS.md`.
+- Журнал: `docs/integration/LOG.md` (на каждую цель и баг, 3–5 строк), `DECISIONS.md` (вопрос → варианты → выбор → почему), `BUGS.md` (симптом → причина → исправление → тест), `STATUS.md` («Следующий шаг: …»). Полный вывод тестов — в файлы, в чат только итоговые числа.
 
 ## Стек
 Python 3.12, uv, aiogram 3, APScheduler, SQLite, google-genai, yt-dlp, trafilatura, httpx, Jinja2, pydantic / pydantic-settings, faster-whisper (голосовые, модель `small` на CPU). Деплой: Docker Compose на домашнем сервере.
@@ -18,14 +21,19 @@ Python 3.12, uv, aiogram 3, APScheduler, SQLite, google-genai, yt-dlp, trafilatu
 - Конспект без Telegram: `uv run python -m digest.cli <url> [--hint "…"] [--save]` — любой источник (YouTube, Reels, TikTok, X, статья); живой вызов Gemini (и запасной путь через Whisper), дубликаты не проверяет; `--save` — commit+push в `VAULT_REPO`
 - Типы: `~/.local/bin/pyright.exe --pythonpath .venv/Scripts/python.exe <файлы>` (до этапа 1 в старом коде ~38 ошибок — смотри только свои файлы)
 - Ручная проверка vault — только `../vault-test` (`remote.git` + `clone`), настоящий myObsidian не трогать
-- Docker: `docker compose build && docker compose up -d`
+- Docker: `docker compose build && docker compose up -d`; сервер — `./deploy/install.sh`, `status.sh`, `update.sh`, `backup.sh`, `restore.sh` (пошагово: docs/DEPLOY.md)
+- Очередь сайта и бэкап без Telegram: `uv run python -m digest.admin [--db …] queue|backup <файл.gz>|api-health`
+- Живая проверка API сайта (только владелец, песочница): `uv run python scripts/check_second_brain_api.py` (URL и токен — из переменных окружения)
 
 ## Правила
 - Часовой пояс Europe/Bucharest, бот на русском.
-- Работаем по этапам из docs/PLAN.md. Не делать функционал следующих этапов без запроса.
+- Работаем по этапам из docs/PLAN.md. Не делать функционал следующих этапов без запроса. Этап 5 (домашний сервер + API Second Brain) разрешён.
 - Весь код конспектов — в `digest/`, логика без Telegram (время, LLM-разбор, Whisper) — в `services/`, Telegram-хендлеры — в `handlers/`, клавиатуры и callback-данные — в `handlers/keyboards.py`.
-- Роутеры подключаются в `main.build_dispatcher` в порядке basic → reminders → voice → links → notes → context; `context` — всегда последним.
-- Кнопки под конспектом (`NoteCb`, таблица `notes`): правда о «прочитано» — frontmatter файла, не БД. Заметки меняет только `Vault` (`set_status`/`replace`/`delete`, под `Vault.lock`); заметку ищем по имени, иначе по `url:` во frontmatter.
+- Роутеры подключаются в `main.build_dispatcher` в порядке basic → brain → reminders → voice → links → notes → context; `brain` (команды сайта) — до ссылок, `context` — всегда последним.
+- Кнопки под конспектом (`NoteCb`, таблица `notes`): правда о «прочитано» — frontmatter файла, не БД. Заметки меняет только хранилище (`VaultBackend` из `digest/vault_base.py`: `GitVault` или `QueuedVault`); заметку ищем по имени, иначе по `url:` во frontmatter.
+- Хранилище — `VAULT_BACKEND=git|api` (`main.build_vault`). В режиме api каждая запись идёт через офлайн-очередь `vault_ops` (`digest/outbox.py`): готовый Markdown в payload (Gemini повторно не зовём), `Idempotency-Key` создаётся один раз при постановке, операции одной заметки (группа `note:<normalize(url)>`) — строго по порядку, недоступен → повтор 30 с…1 ч, 403/422 → `dead` без повторов. `ApiVault` — только HTTP по контракту `docs/SECOND_BRAIN_API_CONTRACT.md`; токен не логировать. Контракт меняется — правь и фейк `tests/fakes/second_brain.py`, и `contract/*.json`.
+- Команды сайта (`handlers/brain.py`): `/task`, `/note`, `/ask`, `/queue`, `/retry`; в режиме git отвечают «нужен VAULT_BACKEND=api». Новые переменные этапа 5: `VAULT_BACKEND`, `SECOND_BRAIN_API_URL`, `SECOND_BRAIN_API_TOKEN`, `SECOND_BRAIN_TIMEOUT_S`, `OUTBOX_MAX_AGE`, `OUTBOX_MAX_ATTEMPTS`, `GEMINI_DETAIL_MODEL`, `DRY_RUN` (список и смысл — docs/DEPLOY.md).
+- Тесты не ходят в сеть: autouse-фикстура `_no_internet` (только localhost); API сайта — фейк на aiohttp.
 - Whisper-путь конспекта — только при `VideoUnreadable` (Gemini не открыл видео), никогда при 429/503/дневной квоте: конспект по расшифровке тоже тратит запрос Gemini.
 - Схема ответа Gemini (`digest/schema.py`): необязательные поля — только `Field(default_factory=…)`, не `= ""`: литеральный `default` уходит в запрос к Gemini (тест L4 это ловит).
 - Время в БД — UTC; всё время в коде — aware datetime; часовой пояс только из `config.py`.
