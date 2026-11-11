@@ -66,12 +66,13 @@ async def run(
 
 async def _main(argv: list[str]) -> int:
     from config import get_settings
-    from digest.fetchers import cookies_warning
+    from digest.fetchers import cookies_warning, ffmpeg_status, find_ffmpeg
     from digest.llm import DigestLLM
     from digest.vault import Vault
     from services.transcribe import Transcriber
 
     settings = get_settings()
+    print(f"ℹ️ {ffmpeg_status(find_ffmpeg())}", file=sys.stderr)
     if warning := cookies_warning(settings.cookies_file):
         print(f"⚠️ {warning}", file=sys.stderr)
     vault = None

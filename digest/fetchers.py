@@ -10,8 +10,9 @@ import re
 import shutil
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, replace
+from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 import httpx
@@ -28,6 +29,11 @@ OEMBED_URL = "https://www.youtube.com/oembed"
 
 # Сначала готовый файл со звуком (слияние дорожек требует ffmpeg), потом — слияние.
 VIDEO_FORMAT = "b[height<=720]/bv*[height<=720]+ba/b"
+# ffmpeg нет: yt-dlp, выбрав «+», не откатывается к «/b», а падает — поэтому без склейки вовсе.
+# Если у сайта есть только дорожки без звука, «b» может взять видео без звука; у Instagram
+# аудио отдельное — «b» не найдёт формат, и будет понятная ошибка про ffmpeg.
+NO_FFMPEG_FORMAT = "b[height<=720]/best[ext=mp4]/best"
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
 # Запасной путь через Whisper: только звук (m4a/webm читает PyAV, ffmpeg не нужен).
 AUDIO_FORMAT = "ba/b"
 ARTICLE_MAX_BYTES = 5 * 1024 * 1024
@@ -49,10 +55,46 @@ class VideoMeta:
 
 
 @dataclass(frozen=True)
+class FFmpeg:
+    path: str
+    bundled: bool  # из imageio-ffmpeg (не в PATH) — yt-dlp нужно передать ffmpeg_location
+
+
+@dataclass(frozen=True)
 class VideoOptions:
     cookies_file: Path | None = None
     max_seconds: int = 3600
     max_mb: int = 300
+    # "auto" — find_ffmpeg(); None — ffmpeg нет (качаем одним файлом); FFmpeg — этот.
+    ffmpeg: FFmpeg | None | Literal["auto"] = "auto"
+
+
+def _bundled_ffmpeg() -> str | None:
+    """ffmpeg из колеса imageio-ffmpeg (ставится только на Windows; в Docker — системный)."""
+    try:
+        import imageio_ffmpeg
+
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:  # пакета нет или RuntimeError «No ffmpeg exe could be found»
+        return None
+
+
+@lru_cache
+def find_ffmpeg() -> FFmpeg | None:
+    """ffmpeg из PATH, иначе из imageio-ffmpeg, иначе None. Ищем один раз за процесс."""
+    if path := shutil.which("ffmpeg"):
+        return FFmpeg(path, bundled=False)
+    if path := _bundled_ffmpeg():
+        return FFmpeg(path, bundled=True)
+    return None
+
+
+def ffmpeg_status(ff: FFmpeg | None) -> str:
+    if ff is None:
+        return "ffmpeg не найден — видео качаю одним файлом (без склейки дорожек)"
+    if ff.bundled:
+        return f"ffmpeg: из imageio-ffmpeg {ff.path}"
+    return f"ffmpeg: системный {ff.path}"
 
 
 @dataclass(frozen=True)
@@ -101,9 +143,16 @@ def cookies_warning(path: Path | None) -> str | None:
     return f"COOKIES_FILE={path}: файла нет — видео качаю без входа (Instagram может не отдать)."
 
 
-def _download_error(err: DownloadError, cookies: Path | None, has_cookies: bool) -> DigestError:
-    text = str(err)
+def _download_error(
+    err: DownloadError, cookies: Path | None, has_cookies: bool, *, no_ffmpeg: bool = False
+) -> DigestError:
+    text = _ANSI.sub("", str(err))  # yt-dlp красит «ERROR:» — в Telegram это «[0;31m»
     low = text.lower()
+    if no_ffmpeg and "requested format is not available" in low:
+        return DigestError(
+            "У ролика нет готового файла со звуком, а ffmpeg для склейки дорожек не найден — "
+            "поставь ffmpeg (или пакет imageio-ffmpeg)."
+        )
     if "login required" in low or "rate-limit" in low or "cookies" in low:
         if cookies is not None and not has_cookies:
             return DigestError(
@@ -143,7 +192,14 @@ def _download_sync(
         "noprogress": True,
         "max_filesize": opts.max_mb * 1024 * 1024,
         "cachedir": False,
+        "color": {"stdout": "no_color", "stderr": "no_color"},
     }
+    ff = find_ffmpeg() if opts.ffmpeg == "auto" else opts.ffmpeg
+    if ff is None:
+        if fmt == VIDEO_FORMAT:
+            params["format"] = NO_FFMPEG_FORMAT
+    elif ff.bundled:
+        params["ffmpeg_location"] = ff.path
     has_cookies = False
     if warning := cookies_warning(opts.cookies_file):
         log.warning(warning)  # не ошибка: многим сайтам вход не нужен
@@ -168,7 +224,7 @@ def _download_sync(
                 raise DigestError(f"Видео длиннее {opts.max_seconds // 60} мин — такое не беру.")
             info = ydl.process_ie_result(info, download=True)
     except DownloadError as err:
-        raise _download_error(err, opts.cookies_file, has_cookies) from err
+        raise _download_error(err, opts.cookies_file, has_cookies, no_ffmpeg=ff is None) from err
 
     # Точный путь после слияния дорожек; поиск по папке мог бы взять недокачанный .part.
     downloads = info.get("requested_downloads") or []

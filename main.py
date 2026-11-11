@@ -14,7 +14,7 @@ from aiogram.enums import ParseMode
 
 from config import gemini_models_log, get_settings
 from database import Database
-from digest.fetchers import VideoOptions, cookies_warning
+from digest.fetchers import VideoOptions, cookies_warning, ffmpeg_status, find_ffmpeg
 from digest.llm import DigestLLM
 from digest.vault import Vault
 from digest.weekly import schedule_weekly
@@ -78,6 +78,7 @@ async def main() -> None:
     tz = settings.timezone
     for i, line in enumerate(gemini_models_log(settings, os.environ)):
         (log.info if i == 0 else log.warning)(line)
+    log.info(ffmpeg_status(find_ffmpeg()))
 
     db = Database(settings.db_path)
     db.init()

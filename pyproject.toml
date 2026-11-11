@@ -17,6 +17,7 @@ dependencies = [
     # PyAV 19.0.0 убрал av.open(metadata_errors=...), а faster-whisper 1.2.1 его передаёт.
     # Снять ограничение, когда faster-whisper выпустит совместимую версию.
     "av>=11,<19",
+    "imageio-ffmpeg>=0.8.1 ; sys_platform == 'win32'",
 ]
 
 [dependency-groups]
