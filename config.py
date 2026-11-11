@@ -1,15 +1,22 @@
 """Все настройки бота — из переменных окружения / .env (pydantic-settings)."""
 
+import re
 from collections.abc import Mapping
+from datetime import timedelta
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import field_validator
+from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Дневная квота Gemini сбрасывается в полночь по тихоокеанскому времени.
 QUOTA_RESET_TZ = ZoneInfo("America/Los_Angeles")
+
+
+_AGE_RE = re.compile(r"(\d+(?:\.\d+)?)\s*([dhm]?)")
+_AGE_UNITS = {"d": "days", "h": "hours", "m": "minutes"}
 
 
 class Settings(BaseSettings):
@@ -48,10 +55,55 @@ class Settings(BaseSettings):
     whisper_fallback_max_seconds: int = 1800
     weekly_digest: bool = True  # вс 18:00 — список непрочитанных конспектов
 
+    # Этап 5: «Подробнее» — более сильная модель (20 запросов/сутки); пусто — основная.
+    gemini_detail_model: str = "gemini-3.8-flash"
+
+    # Этап 5: куда писать заметки. git — свой клон (VAULT_REPO); api — сайт Second Brain.
+    vault_backend: Literal["git", "api"] = "git"
+    second_brain_api_url: str = "http://secondbrain-web:8000/api/v1"
+    second_brain_api_token: SecretStr = SecretStr("")
+    second_brain_timeout_s: float = 15
+    outbox_max_age: timedelta = timedelta(days=7)  # «7d», «12h», «30m» или число дней
+    outbox_max_attempts: int = 30
+
+    # Без Telegram: проверка контейнера (healthcheck, очередь, база) с фиктивным токеном.
+    dry_run: bool = False
+
     @field_validator("vault_repo", "cookies_file", mode="before")
     @classmethod
     def _empty_is_none(cls, value):
         return None if isinstance(value, str) and not value.strip() else value
+
+    @field_validator("outbox_max_age", mode="before")
+    @classmethod
+    def _age(cls, value):
+        if isinstance(value, int | float) and not isinstance(value, bool):
+            return timedelta(days=value)
+        if isinstance(value, str):
+            m = _AGE_RE.fullmatch(value.strip().lower())
+            if m is None:
+                raise ValueError(
+                    f"OUTBOX_MAX_AGE: «7d», «12h», «30m» или число дней, а не {value!r}"
+                )
+            amount, unit = float(m.group(1)), m.group(2) or "d"
+            return timedelta(**{_AGE_UNITS[unit]: amount})
+        return value
+
+    @field_validator("second_brain_api_url")
+    @classmethod
+    def _api_url(cls, value: str) -> str:
+        return value.strip().rstrip("/")
+
+    @model_validator(mode="after")
+    def _api_needs_token(self):
+        if self.vault_backend == "api":
+            if not self.second_brain_api_url.startswith(("http://", "https://")):
+                raise ValueError("VAULT_BACKEND=api: SECOND_BRAIN_API_URL должен быть http(s)://…")
+            if not self.second_brain_api_token.get_secret_value().strip():
+                raise ValueError("VAULT_BACKEND=api: не задан SECOND_BRAIN_API_TOKEN")
+        if self.outbox_max_attempts < 1:
+            raise ValueError("OUTBOX_MAX_ATTEMPTS должен быть ≥ 1")
+        return self
 
     @field_validator("tz")
     @classmethod

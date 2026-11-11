@@ -148,7 +148,6 @@ async def test_ga3_backend_from_settings(tmp_path, db):
 # --- Часть B ------------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(strict=True, reason="S5 G-B1")
 def test_gb1_contract_doc():
     text = (ROOT / "docs/SECOND_BRAIN_API_CONTRACT.md").read_text(encoding="utf-8")
     for needle in (
@@ -169,7 +168,6 @@ def test_gb1_contract_doc():
         assert needle in text, needle
 
 
-@pytest.mark.xfail(strict=True, reason="S5 G-B2")
 def test_gb2_normalize_cases():
     from digest.classifier import normalize
 
@@ -179,7 +177,6 @@ def test_gb2_normalize_cases():
         assert normalize(case["url"]) == case["key"], case["url"]
 
 
-@pytest.mark.xfail(strict=True, reason="S5 G-B3")
 def test_gb3_allowed_tags():
     from digest.llm import ALLOWED_TAGS
 
@@ -188,7 +185,6 @@ def test_gb3_allowed_tags():
     assert "fun" in ALLOWED_TAGS
 
 
-@pytest.mark.xfail(strict=True, reason="S5 G-B4")
 async def test_gb4_fake_server_contract_and_faults(srv):
     import httpx
 
@@ -509,8 +505,15 @@ def test_gf4_deploy_doc():
 async def test_gf5_dry_run_starts_without_telegram(tmp_path, monkeypatch):
     import main
 
+    from aiogram import Bot, Dispatcher
+
     s = _settings(dry_run=True, db_path=str(tmp_path / "d.db"))
     monkeypatch.setattr(main, "get_settings", lambda: s)
+    telegram = AsyncMock(side_effect=AssertionError("DRY_RUN не ходит в Telegram"))
+    monkeypatch.setattr(Dispatcher, "start_polling", telegram)
+    monkeypatch.setattr(Bot, "set_my_commands", telegram)
+    # Роутеры модульные: собранный здесь диспетчер сломал бы остальные тесты.
+    monkeypatch.setattr(main, "build_dispatcher", MagicMock(side_effect=AssertionError("dp")))
     task = asyncio.create_task(main.main())
     hb = tmp_path / "heartbeat"
     for _ in range(50):

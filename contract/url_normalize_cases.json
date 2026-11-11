@@ -1,0 +1,202 @@
+{
+  "version": 1,
+  "description": "Пары «ссылка → ключ normalize()». Бот (digest/classifier.py) и сайт Second Brain (GET /notes/lookup) обязаны давать одинаковые ключи. Ключ — только для сравнения, не для показа.",
+  "rules": [
+    "YouTube (youtube.com, m., music., youtu.be, youtube-nocookie.com): ID видео из watch?v=, youtu.be/ID, /shorts|live|embed|v/ID → youtube:ID (ID — 11 символов [A-Za-z0-9_-])",
+    "Instagram: /reel|reels|p|tv/ID (в т.ч. /user/reel/ID) → instagram:ID",
+    "TikTok (кроме vm.tiktok.com): …/video/ЧИСЛО → tiktok:ЧИСЛО",
+    "Иначе: хост в нижнем регистре без www./m./music. + путь без «/» в конце; из query убираются fbclid, gclid, yclid, igsh, igshid, si, ref, ref_src, feature и всё, что начинается на utm_ или share; оставшиеся параметры сортируются; #якорь отбрасывается; схема (http/https) не важна"
+  ],
+  "cases": [
+    {
+      "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      "key": "youtube:dQw4w9WgXcQ",
+      "note": "watch"
+    },
+    {
+      "url": "https://youtube.com/watch?v=dQw4w9WgXcQ&t=42s&list=PL123",
+      "key": "youtube:dQw4w9WgXcQ",
+      "note": "watch + t + list"
+    },
+    {
+      "url": "https://m.youtube.com/watch?v=dQw4w9WgXcQ&feature=share",
+      "key": "youtube:dQw4w9WgXcQ",
+      "note": "мобильный"
+    },
+    {
+      "url": "https://music.youtube.com/watch?v=dQw4w9WgXcQ",
+      "key": "youtube:dQw4w9WgXcQ",
+      "note": "YouTube Music"
+    },
+    {
+      "url": "https://youtu.be/dQw4w9WgXcQ",
+      "key": "youtube:dQw4w9WgXcQ",
+      "note": "youtu.be"
+    },
+    {
+      "url": "https://youtu.be/dQw4w9WgXcQ?si=AbCdEf123",
+      "key": "youtube:dQw4w9WgXcQ",
+      "note": "youtu.be + si"
+    },
+    {
+      "url": "https://youtu.be/dQw4w9WgXcQ?t=90",
+      "key": "youtube:dQw4w9WgXcQ",
+      "note": "youtu.be + t"
+    },
+    {
+      "url": "https://www.youtube.com/shorts/dQw4w9WgXcQ",
+      "key": "youtube:dQw4w9WgXcQ",
+      "note": "shorts"
+    },
+    {
+      "url": "https://youtube.com/shorts/dQw4w9WgXcQ?si=xyz",
+      "key": "youtube:dQw4w9WgXcQ",
+      "note": "shorts + si"
+    },
+    {
+      "url": "https://www.youtube.com/live/dQw4w9WgXcQ",
+      "key": "youtube:dQw4w9WgXcQ",
+      "note": "live"
+    },
+    {
+      "url": "https://www.youtube.com/embed/dQw4w9WgXcQ",
+      "key": "youtube:dQw4w9WgXcQ",
+      "note": "embed"
+    },
+    {
+      "url": "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ",
+      "key": "youtube:dQw4w9WgXcQ",
+      "note": "nocookie"
+    },
+    {
+      "url": "HTTPS://WWW.YOUTUBE.COM/watch?v=dQw4w9WgXcQ",
+      "key": "youtube:dQw4w9WgXcQ",
+      "note": "регистр хоста"
+    },
+    {
+      "url": "https://www.youtube.com/@fireship",
+      "key": "youtube.com/@fireship",
+      "note": "канал — не видео, обычный ключ"
+    },
+    {
+      "url": "https://www.instagram.com/reel/C1abc-_9/",
+      "key": "instagram:C1abc-_9",
+      "note": "Reels"
+    },
+    {
+      "url": "https://www.instagram.com/reel/C1abc-_9/?igsh=MTc4MmM1",
+      "key": "instagram:C1abc-_9",
+      "note": "Reels + igsh"
+    },
+    {
+      "url": "https://www.instagram.com/reel/C1abc-_9/?dlrf=1&igshid=xyz",
+      "key": "instagram:C1abc-_9",
+      "note": "Reels + dlrf"
+    },
+    {
+      "url": "https://instagram.com/reels/C1abc-_9",
+      "key": "instagram:C1abc-_9",
+      "note": "reels (мн. ч.)"
+    },
+    {
+      "url": "https://www.instagram.com/someuser/reel/C1abc-_9/",
+      "key": "instagram:C1abc-_9",
+      "note": "Reels в профиле"
+    },
+    {
+      "url": "https://www.instagram.com/p/Cxyz123/?utm_source=ig_web_copy_link",
+      "key": "instagram:Cxyz123",
+      "note": "пост"
+    },
+    {
+      "url": "https://www.tiktok.com/@user/video/7301234567890123456",
+      "key": "tiktok:7301234567890123456",
+      "note": "TikTok"
+    },
+    {
+      "url": "https://www.tiktok.com/@user/video/7301234567890123456?is_from_webapp=1&sender_device=pc",
+      "key": "tiktok:7301234567890123456",
+      "note": "TikTok + параметры"
+    },
+    {
+      "url": "https://m.tiktok.com/v/7301234567890123456",
+      "key": "tiktok.com/v/7301234567890123456",
+      "note": "TikTok мобильный без /video/"
+    },
+    {
+      "url": "https://vm.tiktok.com/ZMabc123/",
+      "key": "vm.tiktok.com/ZMabc123",
+      "note": "TikTok короткая — ключ по url"
+    },
+    {
+      "url": "https://habr.com/ru/articles/123/?utm_source=tg&utm_medium=social",
+      "key": "habr.com/ru/articles/123",
+      "note": "utm"
+    },
+    {
+      "url": "https://www.habr.com/ru/articles/123",
+      "key": "habr.com/ru/articles/123",
+      "note": "www и без слэша"
+    },
+    {
+      "url": "https://example.com/post?fbclid=IwAR0abc",
+      "key": "example.com/post",
+      "note": "fbclid"
+    },
+    {
+      "url": "https://example.com/post?gclid=1&yclid=2",
+      "key": "example.com/post",
+      "note": "gclid/yclid"
+    },
+    {
+      "url": "https://example.com/a?utm_source=x&b=2&a=1#top",
+      "key": "example.com/a?a=1&b=2",
+      "note": "сортировка параметров + якорь"
+    },
+    {
+      "url": "https://www.example.com/a/?a=1&b=2",
+      "key": "example.com/a?a=1&b=2",
+      "note": "то же без трекинга"
+    },
+    {
+      "url": "https://example.com/docs/#section-2",
+      "key": "example.com/docs",
+      "note": "якорь"
+    },
+    {
+      "url": "https://example.com/",
+      "key": "example.com",
+      "note": "корень"
+    },
+    {
+      "url": "https://news.ycombinator.com/item?id=1",
+      "key": "news.ycombinator.com/item?id=1",
+      "note": "значимый параметр остаётся"
+    },
+    {
+      "url": "https://x.com/user/status/1790000000000000000?s=20",
+      "key": "x.com/user/status/1790000000000000000?s=20",
+      "note": "X: параметр s остаётся"
+    },
+    {
+      "url": "https://example.com/post?share=1&shared=abc",
+      "key": "example.com/post",
+      "note": "share*"
+    },
+    {
+      "url": "https://example.com/post?ref=tg&ref_src=twsrc",
+      "key": "example.com/post",
+      "note": "ref/ref_src"
+    },
+    {
+      "url": "https://ru.wikipedia.org/wiki/Docker",
+      "key": "ru.wikipedia.org/wiki/Docker",
+      "note": "Википедия"
+    },
+    {
+      "url": "http://example.com/page",
+      "key": "example.com/page",
+      "note": "http"
+    }
+  ]
+}
