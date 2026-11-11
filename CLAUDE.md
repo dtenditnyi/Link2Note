@@ -5,7 +5,10 @@ Telegram-бот «Посмотрю потом»: я кидаю ссылку (You
 Старый бот-напоминалка (assistant_bot) перенесён на этапе 0 — что и почему поменялось: docs/MIGRATION.md, docs/specs/stage-0-migration.md.
 
 ## Как работать
-**Любую функцию, переделку или перенос делай строго по @docs/WORKFLOW.md:** задача → исследование (код, Context7, интернет) → план с критериями приёмки и моё «ок» → сначала тесты (красные) → код → все тесты + ruff + ревью субагентом → коммит после подтверждения.
+**Любую функцию, переделку или перенос делай строго по @docs/WORKFLOW.md (автономно):** задача → исследование (код, Context7, интернет) → 2–3 варианта решения → выбор и обоснование в `docs/integration/DECISIONS.md` (крупные функции — `docs/specs/…`) → критерии приёмки → тесты (красные) → код → все тесты + ruff + ревью субагентом → коммит сам при зелёных тестах.
+Спрашивать владельца только перед необратимыми действиями вне задания: удаление данных, force push, запись в настоящий `myObsidian`, трата платных ресурсов.
+- Задание этапа 5 — `docs/PROMPT_SECOND_BRAIN_INTEGRATION.md`; после сжатия контекста перечитать его и `docs/integration/STATUS.md`.
+- Журнал: `docs/integration/LOG.md` (на каждую цель и баг, 3–5 строк), `DECISIONS.md` (вопрос → варианты → выбор → почему), `BUGS.md` (симптом → причина → исправление → тест), `STATUS.md` («Следующий шаг: …»). Полный вывод тестов — в файлы, в чат только итоговые числа.
 
 ## Стек
 Python 3.12, uv, aiogram 3, APScheduler, SQLite, google-genai, yt-dlp, trafilatura, httpx, Jinja2, pydantic / pydantic-settings, faster-whisper (голосовые, модель `small` на CPU). Деплой: Docker Compose на домашнем сервере.
@@ -24,7 +27,7 @@ Python 3.12, uv, aiogram 3, APScheduler, SQLite, google-genai, yt-dlp, trafilatu
 
 ## Правила
 - Часовой пояс Europe/Bucharest, бот на русском.
-- Работаем по этапам из docs/PLAN.md. Не делать функционал следующих этапов без запроса.
+- Работаем по этапам из docs/PLAN.md. Не делать функционал следующих этапов без запроса. Этап 5 (домашний сервер + API Second Brain) разрешён.
 - Весь код конспектов — в `digest/`, логика без Telegram (время, LLM-разбор, Whisper) — в `services/`, Telegram-хендлеры — в `handlers/`, клавиатуры и callback-данные — в `handlers/keyboards.py`.
 - Роутеры подключаются в `main.build_dispatcher` в порядке basic → brain → reminders → voice → links → notes → context; `brain` (команды сайта) — до ссылок, `context` — всегда последним.
 - Кнопки под конспектом (`NoteCb`, таблица `notes`): правда о «прочитано» — frontmatter файла, не БД. Заметки меняет только хранилище (`VaultBackend` из `digest/vault_base.py`: `GitVault` или `QueuedVault`); заметку ищем по имени, иначе по `url:` во frontmatter.
