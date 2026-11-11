@@ -35,6 +35,7 @@ from digest.pipeline import (
     Transcribes,
     make_note,
 )
+from digest.vault_base import VaultBackend
 from handlers import keyboards as kb
 
 log = logging.getLogger(__name__)
@@ -140,12 +141,6 @@ def _postpone(
     return True, text
 
 
-class NoteStore(Protocol):
-    async def save(self, title: str, markdown: str, day: date) -> str: ...
-
-    async def replace(self, name: str, url: str, markdown: str, *, skip=()) -> str: ...
-
-
 async def _edit(bot, job: Job, text: str, markup=None) -> None:
     """Редактируем статус-сообщение; если не вышло (удалено и т.п.) — только лог."""
     try:
@@ -169,7 +164,7 @@ async def process_job(
     bot,
     llm: DigestModel,
     http: httpx.AsyncClient,
-    vault: NoteStore,
+    vault: VaultBackend,
     today: Callable[[], date],
     db: Database,
     video: VideoOptions | None = None,

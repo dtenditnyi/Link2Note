@@ -6,18 +6,13 @@
 
 import logging
 from html import escape
-from typing import Protocol
 
-from digest.vault import UnreadNote
+from digest.vault_base import UnreadNote, VaultBackend
 
 log = logging.getLogger(__name__)
 
 JOB_ID = "weekly-digest"
 LIMIT = 5
-
-
-class UnreadSource(Protocol):
-    async def unread(self) -> list[UnreadNote]: ...
 
 
 def unread_text(notes: list[UnreadNote], limit: int = LIMIT) -> str | None:
@@ -33,7 +28,7 @@ def unread_text(notes: list[UnreadNote], limit: int = LIMIT) -> str | None:
     return "\n".join(lines)
 
 
-async def send_weekly(*, bot, vault: UnreadSource, chat_id: int) -> None:
+async def send_weekly(*, bot, vault: VaultBackend, chat_id: int) -> None:
     """Задача планировщика: ошибки только в лог — следующая неделя всё равно наступит."""
     try:
         text = unread_text(await vault.unread())
@@ -45,7 +40,7 @@ async def send_weekly(*, bot, vault: UnreadSource, chat_id: int) -> None:
         log.exception("Воскресный дайджест не отправлен")
 
 
-def schedule_weekly(aps, *, bot, vault: UnreadSource, chat_id: int) -> None:
+def schedule_weekly(aps, *, bot, vault: VaultBackend, chat_id: int) -> None:
     """Вс 18:00 в часовом поясе планировщика (TZ из config)."""
     aps.add_job(
         send_weekly,

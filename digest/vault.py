@@ -14,12 +14,14 @@ import os
 import re
 import signal
 from collections.abc import Collection
-from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
 from digest.classifier import normalize
 from digest.errors import NoteAmbiguous, NoteNotFound, VaultError
+from digest.vault_base import UnreadNote
+
+__all__ = ["GitVault", "UnreadNote", "Vault", "frontmatter", "safe_filename", "with_status"]
 
 log = logging.getLogger(__name__)
 
@@ -57,14 +59,6 @@ async def _kill(proc: asyncio.subprocess.Process) -> None:
         transport = getattr(proc, "_transport", None)
         if transport is not None:
             transport.close()
-
-
-@dataclass(frozen=True)
-class UnreadNote:
-    name: str  # имя файла без .md
-    title: str  # первый заголовок «# …» (с эмодзи)
-    date_added: date | None
-    read_minutes: int
 
 
 _FRONTMATTER = re.compile(r"\A---\n(.*?\n)---\n", re.S)
@@ -123,7 +117,9 @@ def safe_filename(title: str) -> str:
     return name or "Без названия"
 
 
-class Vault:
+class GitVault:
+    """Git-клон: бот сам делает pull --rebase / commit / push (VAULT_BACKEND=git)."""
+
     def __init__(self, repo: Path, folder: str, author_name: str, author_email: str):
         self.repo = Path(repo)
         self.folder = folder
@@ -133,6 +129,13 @@ class Vault:
 
     def is_ready(self) -> bool:
         return (self.repo / ".git").exists()
+
+    async def ready(self) -> bool:
+        return self.is_ready()
+
+    async def find_by_url(self, url: str) -> list[str] | None:
+        """Дубликаты в git-режиме проверяются по своей базе (digests), как до этапа 5."""
+        return None
 
     async def _git(self, *args: str) -> str:
         name, email = self.author
@@ -346,6 +349,9 @@ class Vault:
                 notes.append(UnreadNote(path.stem, _title(text, path.stem), added, minutes))
         notes.sort(key=lambda n: (n.date_added or date.max, n.name))
         return notes
+
+
+Vault = GitVault  # старое имя: тесты и код до этапа 5
 
 
 def _short(err: Exception) -> str:

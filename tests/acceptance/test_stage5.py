@@ -101,7 +101,6 @@ async def test_g0_voice_keeps_transcript_when_gemini_down():
 # --- Часть A ------------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(strict=True, reason="S5 G-A1")
 def test_ga1_protocol_and_errors():
     from digest.errors import VaultError, VaultQueued, VaultRejected, VaultUnavailable
     from digest.vault_base import VaultBackend
@@ -114,7 +113,6 @@ def test_ga1_protocol_and_errors():
     assert VaultUnavailable("x", retry_after=5).retry_after == 5
 
 
-@pytest.mark.xfail(strict=True, reason="S5 G-A2")
 async def test_ga2_git_vault_is_backend(tmp_path):
     from digest.vault import GitVault, Vault
     from digest.vault_base import VaultBackend

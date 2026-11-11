@@ -14,7 +14,7 @@ from aiogram.types import CallbackQuery, InaccessibleMessage, InlineKeyboardMark
 
 from database import Database, NoteRow
 from digest.errors import NoteNotFound, VaultError
-from digest.vault import Vault
+from digest.vault_base import VaultBackend
 from digest.weekly import unread_text
 from digest.worker import Job
 from handlers import keyboards as kb
@@ -68,7 +68,7 @@ async def on_note(
     cb: CallbackQuery,
     callback_data: NoteCb,
     db: Database,
-    vault: Vault | None,
+    vault: VaultBackend | None,
     link_queue: asyncio.Queue[Job],
 ) -> None:
     if cb.message is None:  # кнопка из inline-сообщения — у нас таких нет
@@ -125,7 +125,7 @@ async def on_note(
         await cb.answer()
 
 
-async def _read(cb: CallbackQuery, note: NoteRow, db: Database, vault: Vault) -> None:
+async def _read(cb: CallbackQuery, note: NoteRow, db: Database, vault: VaultBackend) -> None:
     try:
         name = await vault.set_status(
             note.note_name, note.url, "read", skip=db.other_note_names(note.id)
@@ -145,7 +145,7 @@ async def _read(cb: CallbackQuery, note: NoteRow, db: Database, vault: Vault) ->
     await _set_markup(cb, _actions(note, read=True))
 
 
-async def _delete(cb: CallbackQuery, note: NoteRow, db: Database, vault: Vault) -> None:
+async def _delete(cb: CallbackQuery, note: NoteRow, db: Database, vault: VaultBackend) -> None:
     try:
         await vault.delete(note.note_name, note.url, skip=db.other_note_names(note.id))
         text = f"🗑 Удалено: «{escape(note.note_name)}»"
@@ -161,7 +161,7 @@ async def _delete(cb: CallbackQuery, note: NoteRow, db: Database, vault: Vault) 
 
 
 @router.message(Command("unread"))
-async def cmd_unread(message: Message, vault: Vault | None) -> None:
+async def cmd_unread(message: Message, vault: VaultBackend | None) -> None:
     if vault is None:
         await message.answer(NO_VAULT)
         return
