@@ -23,3 +23,6 @@ GOALS.md (26 целей), DECISIONS D1–D12, `tests/acceptance/test_stage5.py`:
 
 ### 2026-11-11 — G-A3, G-D1…D5, G-E1, G-F2 — выбор backend, команды сайта, модель «Подробнее», heartbeat
 `main.build_vault`/`build_llms`, `DRY_RUN`; `handlers/brain.py` (/task /note /ask /queue /retry), `services/tasks.py`, `services/tg_format.py`, голос «добавь задачу/запиши в заметки» (D11), `GEMINI_DETAIL_MODEL`; `services/heartbeat.py` + `HEALTHCHECK`. Правки старых тестов — D14. Ревью A+B: 9 находок исправлено (REVIEW-AB.md, B02). Тесты: 820 passed / 6 xfailed.
+
+### 2026-11-11 — G-0 — перенос из gemini-resilience
+Голосовое при перегрузке Gemini (429/5xx после запасной): наш парсер времени → черновик «(разобрал без Gemini)»; не нашёл → «🎧 Я услышал…» + «🔁 Повторить» (`TextStore`, 6 ч, без повторного Whisper). Варианты → D1. Тесты: `tests/test_voice_outage.py` 5 passed.

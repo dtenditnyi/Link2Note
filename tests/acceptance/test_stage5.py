@@ -93,9 +93,10 @@ def test_g0_gemini_resilience_decided():
     assert "gemini-resilience" in text
 
 
-@pytest.mark.xfail(strict=True, reason="S5 G-0 voice outage port")
 async def test_g0_voice_keeps_transcript_when_gemini_down():
-    from handlers.voice import on_voice_text_retry  # noqa: F401  перенос из gemini-resilience
+    from handlers.voice import on_voice_text_retry  # перенос из gemini-resilience
+
+    assert callable(on_voice_text_retry)
 
 
 # --- Часть A ------------------------------------------------------------------------------

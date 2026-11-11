@@ -135,3 +135,11 @@ def note_delete_confirm(note_id: int) -> InlineKeyboardMarkup:
             ]
         ]
     )
+
+
+class VoiceRetryCb(CallbackData, prefix="vretry"):
+    mid: int  # message_id сообщения «🎧 Я услышал…»
+
+
+def voice_retry(mid: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[_button("🔁 Повторить", VoiceRetryCb(mid=mid))]])

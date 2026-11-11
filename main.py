@@ -31,7 +31,7 @@ from handlers import reminders as reminders_handlers
 from handlers.middlewares import setup_owner_filter
 from scheduler import ReminderScheduler
 from services.context import ContextMemory
-from services.drafts import DraftStore
+from services.drafts import DraftStore, TextStore
 from services.heartbeat import run_heartbeat
 from services.intent import IntentParser
 from services.transcribe import Transcriber
@@ -61,6 +61,7 @@ def build_dispatcher(
         intent=intent,
         memory=memory,
         drafts=DraftStore(),
+        transcripts=TextStore(),
         tz=tz,
         clock=lambda: datetime.now(tz),
         voice_max_seconds=voice_max_seconds,

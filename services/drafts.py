@@ -25,3 +25,21 @@ class DraftStore:
         if item is None or item[1] <= now:
             return None
         return item[0]
+
+
+class TextStore:
+    """Расшифровки голосовых для «🔁 Повторить», когда Gemini был недоступен (живут ttl)."""
+
+    def __init__(self, ttl: timedelta = timedelta(hours=6)):
+        self.ttl = ttl
+        self._items: dict[DraftKey, tuple[str, datetime]] = {}
+
+    def put(self, key: DraftKey, text: str, now: datetime) -> None:
+        self._items = {k: v for k, v in self._items.items() if v[1] > now}
+        self._items[key] = (text, now + self.ttl)
+
+    def pop(self, key: DraftKey, now: datetime) -> str | None:
+        item = self._items.pop(key, None)
+        if item is None or item[1] <= now:
+            return None
+        return item[0]
