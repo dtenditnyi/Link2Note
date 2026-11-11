@@ -503,9 +503,9 @@ def test_gf4_deploy_doc():
 
 @pytest.mark.xfail(strict=True, reason="S5 G-F5")
 async def test_gf5_dry_run_starts_without_telegram(tmp_path, monkeypatch):
-    import main
-
     from aiogram import Bot, Dispatcher
+
+    import main
 
     s = _settings(dry_run=True, db_path=str(tmp_path / "d.db"))
     monkeypatch.setattr(main, "get_settings", lambda: s)
