@@ -218,7 +218,10 @@ class FakeSecondBrain:
         if request.path != f"{PREFIX}/health":
             if request.headers.get("Authorization") != f"Bearer {self.token}":
                 return _err(401, "unauthorized", "неверный токен", retryable=False)
-        resp = await self._idempotent(request, handler)
+        try:
+            resp = await self._idempotent(request, handler)
+        except json.JSONDecodeError:
+            return _err(400, "validation_error", "тело — не JSON", retryable=False)
         if fault is not None and fault.kind == "drop" and request.transport is not None:
             request.transport.abort()  # записали, но ответ до клиента не дойдёт
         return resp
@@ -244,7 +247,18 @@ class FakeSecondBrain:
         if request.method == "GET" or not key:
             return await handler(request)
         body = await request.read()
-        fp = hashlib.sha256(f"{request.method} {request.path_qs}\n".encode() + body).hexdigest()
+        # Отпечаток по смыслу, а не по байтам (контракт): метод, раскодированный путь,
+        # отсортированный query, разобранный JSON с отсортированными ключами.
+        try:
+            parsed = json.loads(body) if body else None
+        except ValueError:
+            return _err(400, "validation_error", "тело — не JSON", retryable=False)
+        canon = json.dumps(
+            [request.method, request.path, sorted(request.query.items()), parsed],
+            sort_keys=True,
+            ensure_ascii=False,
+        )
+        fp = hashlib.sha256(canon.encode()).hexdigest()
         if key in self._idem:
             stored_fp, status, payload = self._idem[key]
             if stored_fp != fp:
@@ -253,7 +267,7 @@ class FakeSecondBrain:
                 return web.Response(status=status)
             return web.json_response(payload, status=status)
         if key in self._inflight:
-            return _err(409, "conflict", "запрос с этим ключом ещё выполняется", retryable=True)
+            return _err(409, "in_progress", "запрос с этим ключом ещё выполняется", retryable=True)
         self._inflight.add(key)
         try:
             resp = await handler(request)
@@ -266,7 +280,8 @@ class FakeSecondBrain:
 
     def _file(self, rel: str) -> Path:
         p = PurePosixPath(rel)
-        if p.is_absolute() or ".." in p.parts or p.parts[:1] in ((".git",), (".obsidian",)):
+        bad = {"..", ".git", ".obsidian"}
+        if "\\" in rel or p.is_absolute() or bad & set(p.parts) or ":" in rel:
             raise web.HTTPBadRequest(
                 text=json.dumps(
                     {"error": {"code": "validation_error", "message": "путь", "retryable": False}}
@@ -417,6 +432,12 @@ class FakeSecondBrain:
         if conflict := self._sha_conflict(data.get("if_sha"), content):
             return conflict
         new = _set_fm(content, {k: str(v) for k, v in (data.get("set") or {}).items()})
+        if problem := self._check_content(new):
+            return _err(422, "validation_error", problem, retryable=False)
+        if new == content:  # ничего не изменилось — без нового коммита
+            return web.json_response(
+                {"path": rel, "sha": _sha(new), "commit": f"{self._commit:07x}", "pushed": True}
+            )
         if new != content:
             path.write_bytes(new.encode("utf-8"))
             self._log_write(request, rel)

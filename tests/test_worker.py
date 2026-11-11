@@ -56,6 +56,7 @@ def _llm(result=None, exc=None, model="gemini-test"):
 def _vault(name="2026-11-09 Хоткеи", exc=None):
     v = MagicMock()
     v.save = AsyncMock(return_value=name, side_effect=exc)
+    v.find_by_url = AsyncMock(return_value=None)  # как GitVault: дубликаты по своей базе
     return v
 
 

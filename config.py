@@ -20,7 +20,10 @@ _AGE_UNITS = {"d": "days", "h": "hours", "m": "minutes"}
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    # hide_input_in_errors: ошибка проверки не печатает входные значения (токены) в лог.
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore", hide_input_in_errors=True
+    )
 
     bot_token: str
     owner_id: int
@@ -89,6 +92,13 @@ class Settings(BaseSettings):
             return timedelta(**{_AGE_UNITS[unit]: amount})
         return value
 
+    @field_validator("second_brain_api_token", mode="before")
+    @classmethod
+    def _strip_token(cls, value):
+        if isinstance(value, SecretStr):
+            value = value.get_secret_value()
+        return value.strip() if isinstance(value, str) else value
+
     @field_validator("second_brain_api_url")
     @classmethod
     def _api_url(cls, value: str) -> str:
@@ -103,6 +113,10 @@ class Settings(BaseSettings):
                 raise ValueError("VAULT_BACKEND=api: не задан SECOND_BRAIN_API_TOKEN")
         if self.outbox_max_attempts < 1:
             raise ValueError("OUTBOX_MAX_ATTEMPTS должен быть ≥ 1")
+        if self.outbox_max_age <= timedelta(0):
+            raise ValueError("OUTBOX_MAX_AGE должен быть больше нуля")
+        if self.second_brain_timeout_s <= 0:
+            raise ValueError("SECOND_BRAIN_TIMEOUT_S должен быть больше нуля")
         return self
 
     @field_validator("tz")

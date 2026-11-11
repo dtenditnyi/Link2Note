@@ -124,7 +124,6 @@ async def test_ga2_git_vault_is_backend(tmp_path):
     assert await v.find_by_url("https://youtu.be/x") is None
 
 
-@pytest.mark.xfail(strict=True, reason="S5 G-A3")
 async def test_ga3_backend_from_settings(tmp_path, db):
     from pydantic import ValidationError
 
@@ -210,7 +209,6 @@ async def test_gb4_fake_server_contract_and_faults(srv):
 # --- Часть C ------------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(strict=True, reason="S5 G-C1")
 async def test_gc1_api_vault_roundtrip_and_errors(srv, caplog):
     from digest.errors import NoteNotFound, VaultRejected, VaultUnavailable
 
@@ -233,7 +231,6 @@ async def test_gc1_api_vault_roundtrip_and_errors(srv, caplog):
     assert srv.token not in caplog.text and srv.token not in repr(api)
 
 
-@pytest.mark.xfail(strict=True, reason="S5 G-C2")
 def test_gc2_outbox_table_migration(tmp_path):
     import sqlite3
 
@@ -250,7 +247,6 @@ def test_gc2_outbox_table_migration(tmp_path):
     } <= cols  # fmt: skip
 
 
-@pytest.mark.xfail(strict=True, reason="S5 G-C3")
 async def test_gc3_unavailable_then_delivered_and_message_updated(db, srv):
     from digest.errors import VaultQueued
 
@@ -270,7 +266,6 @@ async def test_gc3_unavailable_then_delivered_and_message_updated(db, srv):
     assert bot.edit_message_text.await_args.kwargs["text"].startswith("📝 Заметка")
 
 
-@pytest.mark.xfail(strict=True, reason="S5 G-C3")
 async def test_gc3_rejected_is_dead_and_owner_notified(db, srv):
     from digest.errors import VaultRejected
 
@@ -285,7 +280,6 @@ async def test_gc3_rejected_is_dead_and_owner_notified(db, srv):
     assert len(_digest_notes(srv)) == 1
 
 
-@pytest.mark.xfail(strict=True, reason="S5 G-C3")
 async def test_gc3_duplicate_lookup_via_api_or_local(db, srv):
     vault, outbox, _ = _stack(db, srv)
     url = "https://youtu.be/dQw4w9WgXcQ"
@@ -296,7 +290,6 @@ async def test_gc3_duplicate_lookup_via_api_or_local(db, srv):
     assert await vault.find_by_url(url) is None  # недоступен → проверка по локальной базе
 
 
-@pytest.mark.xfail(strict=True, reason="S5 G-C4")
 async def test_gc4_drop_after_write_no_duplicate(db, srv):
     vault, outbox, _ = _stack(db, srv)
     srv.fail("drop")
@@ -309,7 +302,6 @@ async def test_gc4_drop_after_write_no_duplicate(db, srv):
     assert len(_digest_notes(srv)) == 1
 
 
-@pytest.mark.xfail(strict=True, reason="S5 G-C4")
 async def test_gc4_delete_before_create_keeps_order(db, srv):
     from digest.errors import VaultQueued
 
@@ -339,7 +331,6 @@ def _cmd(name, args):
     return CommandObject(prefix="/", command=name, args=args)
 
 
-@pytest.mark.xfail(strict=True, reason="S5 G-D1")
 async def test_gd1_task_parsing_and_post(db, srv, tz):
     from handlers.brain import cmd_task
 
@@ -355,7 +346,6 @@ async def test_gd1_task_parsing_and_post(db, srv, tz):
     assert "✅" in sent_texts(msg.answer)[-1]
 
 
-@pytest.mark.xfail(strict=True, reason="S5 G-D2")
 async def test_gd2_note_inbox_and_weekly(db, srv):
     from handlers.brain import cmd_note
 
@@ -368,11 +358,11 @@ async def test_gd2_note_inbox_and_weekly(db, srv):
     ]
 
 
-@pytest.mark.xfail(strict=True, reason="S5 G-D3")
 async def test_gd3_ask_html_split_and_unavailable(db, srv):
     from handlers.brain import cmd_ask
 
     vault, _, _ = _stack(db, srv)
+    await vault.save("Docker", _md("Docker"), date(2026, 11, 11))  # источник для ответа
     srv.ask_answer = "**Ответ** <script>\n\n" + ("строка " * 40 + "\n\n") * 40
     msg = make_message("/ask")
     await cmd_ask(msg, _cmd("ask", "что я знаю про Docker?"), brain=vault)
@@ -386,7 +376,6 @@ async def test_gd3_ask_html_split_and_unavailable(db, srv):
     assert "недоступен" in sent_texts(msg.answer)[-1]
 
 
-@pytest.mark.xfail(strict=True, reason="S5 G-D4")
 def test_gd4_voice_commands_routed():
     from services.brain_intent import voice_command
 
@@ -395,7 +384,6 @@ def test_gd4_voice_commands_routed():
     assert voice_command("напомни через 5 минут") is None
 
 
-@pytest.mark.xfail(strict=True, reason="S5 G-D5")
 async def test_gd5_queue_retry_help(db, srv):
     from handlers.basic import COMMANDS, HELP
     from handlers.brain import cmd_queue, cmd_retry, cmd_task
@@ -423,7 +411,6 @@ async def test_gd5_queue_retry_help(db, srv):
 # --- Часть E ------------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(strict=True, reason="S5 G-E1")
 def test_ge1_detail_model():
     from main import build_llms
 
@@ -452,7 +439,6 @@ def test_gf1_compose():
     assert "SECOND_BRAIN_CONTAINER" in str(bot["environment"])
 
 
-@pytest.mark.xfail(strict=True, reason="S5 G-F2")
 def test_gf2_heartbeat(tmp_path):
     from services.heartbeat import is_healthy, write_heartbeat
 
@@ -501,7 +487,6 @@ def test_gf4_deploy_doc():
     assert "docs/DEPLOY.md" in (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
 
 
-@pytest.mark.xfail(strict=True, reason="S5 G-F5")
 async def test_gf5_dry_run_starts_without_telegram(tmp_path, monkeypatch):
     from aiogram import Bot, Dispatcher
 
@@ -607,12 +592,10 @@ async def _e2e(db, srv, tmp_path, *, restart: bool):
     assert sum(1 for w in srv.writes if w["method"] == "POST" and w["path"] == "/notes") == 1
 
 
-@pytest.mark.xfail(strict=True, reason="S5 G-E2E")
 async def test_e2e_full_flow(db, srv, tmp_path):
     await _e2e(db, srv, tmp_path, restart=False)
 
 
-@pytest.mark.xfail(strict=True, reason="S5 G-E2E")
 async def test_e2e_with_restart(db, srv, tmp_path):
     await _e2e(db, srv, tmp_path, restart=True)
 

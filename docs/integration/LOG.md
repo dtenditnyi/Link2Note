@@ -17,3 +17,9 @@ GOALS.md (26 целей), DECISIONS D1–D12, `tests/acceptance/test_stage5.py`:
 
 ### 2026-11-11 — G-B1…B4 — контракт и фейковый сервер
 `docs/SECOND_BRAIN_API_CONTRACT.md`, `contract/url_normalize_cases.json` (38 пар), `contract/allowed_tags.json` (17 тегов, `fun` — D9), `tests/fakes/second_brain.py` (aiohttp, все эндпоинты, права, идемпотентность, сбои 500/503/429/401/403/409/422/timeout/drop/выключен). Настройки этапа 5 в `config.py` (+12 тестов). Тесты: 676 passed / 24 xfailed. Найден B01 (тест ходил в Telegram). Коммит `244b4ab`.
+
+### 2026-11-11 — G-C1…C4 — ApiVault и офлайн-очередь
+`digest/vault_api.py` (httpx, ключи идемпотентности, uuid5 для if_sha — D6, 403 вне папки — D13), таблица `vault_ops`, `digest/outbox.py` (`Outbox` + `QueuedVault`, группы по url — D4/D5, бэкофф 30 с→1 ч, Retry-After, dead + уведомление, max age/attempts, /retry), воркер и кнопки понимают `VaultQueued`, дубликаты через lookup (D7). Тесты: vault_api 32, outbox 21, сценарии+стресс 23. Баг B03.
+
+### 2026-11-11 — G-A3, G-D1…D5, G-E1, G-F2 — выбор backend, команды сайта, модель «Подробнее», heartbeat
+`main.build_vault`/`build_llms`, `DRY_RUN`; `handlers/brain.py` (/task /note /ask /queue /retry), `services/tasks.py`, `services/tg_format.py`, голос «добавь задачу/запиши в заметки» (D11), `GEMINI_DETAIL_MODEL`; `services/heartbeat.py` + `HEALTHCHECK`. Правки старых тестов — D14. Ревью A+B: 9 находок исправлено (REVIEW-AB.md, B02). Тесты: 820 passed / 6 xfailed.

@@ -11,11 +11,14 @@ from aiogram import Bot, F, Router
 from aiogram.types import CallbackQuery, Message
 
 from database import Database
+from digest.outbox import QueuedVault
 from handlers import keyboards as kb
+from handlers.brain import add_note, add_task
 from handlers.keyboards import VoiceCb
 from handlers.reminders import card_text
 from handlers.utils import edit_text
 from scheduler import ReminderScheduler
+from services.brain_intent import voice_command
 from services.context import ContextMemory
 from services.drafts import DraftStore
 from services.intent import IntentError, IntentParser
@@ -39,6 +42,7 @@ async def on_voice(
     clock: Callable[[], datetime],
     tz: tzinfo,
     voice_max_seconds: int,
+    brain: QueuedVault | None = None,
 ) -> None:
     if (message.voice.duration or 0) > voice_max_seconds:
         await message.answer(f"Голосовое длиннее {voice_max_seconds} с — запиши покороче.")
@@ -52,6 +56,14 @@ async def on_voice(
             text = await transcriber.transcribe(path)
         if not text.strip():
             await status.edit_text("Не расслышал — попробуй ещё раз.")
+            return
+        if brain is not None and (command := voice_command(text)) is not None:
+            kind, rest = command  # «добавь задачу …» / «запиши в заметки …» — без Gemini (D11)
+            await status.edit_text(f"<i>🎧 «{escape(text)}»</i>")
+            if kind == "task":
+                await add_task(message, brain, rest, clock())
+            else:
+                await add_note(message, brain, rest)
             return
         await status.edit_text(f"<i>🤔 Разбираю: «{escape(text)}»</i>")
         now = clock()

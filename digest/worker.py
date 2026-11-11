@@ -25,8 +25,8 @@ import httpx
 
 from config import QUOTA_RESET_TZ
 from database import Database
-from digest.classifier import canonical_youtube, classify, youtube_id
-from digest.errors import DigestError, GeminiBusy, VaultError
+from digest.classifier import canonical_youtube, classify, normalize, youtube_id
+from digest.errors import DigestError, GeminiBusy, VaultError, VaultQueued
 from digest.fetchers import VideoOptions
 from digest.pipeline import (
     WHISPER_MAX_SECONDS,
@@ -172,7 +172,11 @@ async def process_job(
     postponer: Later | None = None,
     transcriber: Transcribes | None = None,
     whisper_max_seconds: int = WHISPER_MAX_SECONDS,
+    outbox=None,
+    detail_llm: DigestModel | None = None,
 ) -> None:
+    """outbox (режим api) — к ждущей отправки операции привязывается статус-сообщение;
+    detail_llm — модель для «Подробнее» (GEMINI_DETAIL_MODEL), иначе основная."""
     start = time.monotonic()
     status = "failed"
     if job.id is not None:
@@ -188,15 +192,24 @@ async def process_job(
             if target is None:  # удалили, пока задача ждала в очереди — квоту не тратим
                 raise DigestError("заметка уже удалена — подробный конспект не делаю.")
 
+        known = None if job.force else db.find_digest
+        if not job.force and target is None:
+            remote = await _remote_names(vault, job.url)
+            if remote:
+                raise DuplicateError(remote[0], [normalize(job.url)])
+            if remote is not None:
+                known = None  # сайт ответил «нет» — правда у него, а не у локальной базы
+
         day = today()
+        model = detail_llm if target is not None and detail_llm is not None else llm
         note = await make_note(
             job.url,
             job.hint,
-            llm=llm,
+            llm=model,
             http=http,
             today=day,
             video=video,
-            known=None if job.force else db.find_digest,
+            known=known,
             progress=progress,
             transcriber=transcriber,
             whisper_max_seconds=whisper_max_seconds,
@@ -204,6 +217,7 @@ async def process_job(
         d = note.digest
         if target is not None:
             warning = ""
+            queued = None
             try:
                 name = await vault.replace(
                     target.note_name,
@@ -211,6 +225,10 @@ async def process_job(
                     note.markdown,
                     skip=db.other_note_names(target.id),
                 )
+            except VaultQueued as err:  # сайт недоступен — подробный текст в очереди
+                name = err.note_name or target.note_name
+                warning = f"\n\n{escape(str(err))}"
+                queued = (err.op_id, "🔁 Подробный конспект готов\n\n" + _summary(d, name))
             except VaultError as err:
                 if not err.note_name:  # не закоммичено — как обычная ошибка
                     raise
@@ -226,11 +244,22 @@ async def process_job(
                 "🔁 Подробный конспект готов\n\n" + _summary(d, name) + warning,
                 kb.note_actions(target.id, detailed=True, read=False),
             )
+            if queued is not None:
+                await _attach(bot, job, outbox, queued[0], queued[1], target.id)
             return
 
         source = classify(job.url).value
         try:
             name = await vault.save(d.title, note.markdown, day)
+        except VaultQueued as err:  # сайт недоступен: заметка ждёт в outbox, кнопки уже работают
+            name = err.note_name or d.title
+            note_id = db.add_note(name, note.url or job.url, source, job.chat_id)
+            db.save_digest(note.keys, name, job.url, source, note_id=note_id)
+            status = "done"
+            text = _summary(d, name)
+            await _edit(bot, job, f"{text}\n\n{escape(str(err))}", kb.note_actions(note_id))
+            await _attach(bot, job, outbox, err.op_id, text, note_id)
+            return
         except VaultError as err:
             if err.note_name:  # закоммичена локально — уйдёт со следующим push
                 note_id = db.add_note(err.note_name, note.url or job.url, source, job.chat_id)
@@ -257,9 +286,12 @@ async def process_job(
         markup = None
         vid = youtube_id(job.url)
         note_url = canonical_youtube(vid) if vid else job.url  # как в самой заметке
-        if (note_id := db.note_id_for(err.keys, job.chat_id, url=note_url)) is not None and (
-            row := db.get_note(note_id)
-        ) is not None:
+        note_id = db.note_id_for(err.keys, job.chat_id, url=note_url)
+        if note_id is None:  # нашёл сайт (lookup), а в своей базе строки нет — заводим
+            source = classify(job.url).value
+            note_id = db.add_note(err.note_name, note_url, source, job.chat_id)
+            db.save_digest(err.keys, err.note_name, job.url, source, note_id=note_id)
+        if (row := db.get_note(note_id)) is not None:
             markup = kb.note_actions(row.id, detailed=row.detailed, read=row.read)
         await _edit(bot, job, f"♻️ Уже есть: «{escape(err.note_name)}»", markup)
     except DigestError as err:
@@ -277,6 +309,26 @@ async def process_job(
             else:
                 db.finish_job(job.id, status)
         log.info("⏱ всего: %.1f с, %s (%s)", time.monotonic() - start, status, job.url)
+
+
+async def _remote_names(vault: VaultBackend, url: str) -> list[str] | None:
+    """Дубликаты по хранилищу (api: lookup); None — не знает, проверяем по своей базе."""
+    try:
+        return await vault.find_by_url(url)
+    except VaultError as err:
+        log.warning("Дубликаты: хранилище не ответило (%s) — проверяю по локальной базе", err)
+        return None
+
+
+async def _attach(bot, job: Job, outbox, op_id: int, text: str, note_id: int) -> None:
+    """Сообщение обновится, когда операция дойдёт до сайта. Дошла, пока мы правили «📮», —
+    обновляем сразу (фоновая отправка не знала, какое сообщение трогать)."""
+    if outbox is None:
+        return
+    outbox.attach(op_id, chat_id=job.chat_id, msg_id=job.status_msg_id, text=text, note_id=note_id)
+    op = outbox.db.get_op(op_id)
+    if op is not None and op.status == "done":
+        await outbox.notify_done(op_id)
 
 
 async def restore_jobs(

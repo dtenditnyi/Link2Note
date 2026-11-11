@@ -16,6 +16,11 @@ COMMANDS = [
     BotCommand(command="new", description="Создать напоминание"),
     BotCommand(command="list", description="Мои напоминания"),
     BotCommand(command="unread", description="Непрочитанные конспекты"),
+    BotCommand(command="task", description="Задача на сайт Second Brain"),
+    BotCommand(command="note", description="Запись во «Входящие» (неделя — в недельную)"),
+    BotCommand(command="ask", description="Вопрос ИИ по моим заметкам"),
+    BotCommand(command="queue", description="Что ждёт отправки на сайт"),
+    BotCommand(command="retry", description="Отправить очередь сайта сейчас"),
     BotCommand(command="cancel", description="Отменить текущее действие"),
     BotCommand(command="help", description="Что умеет бот"),
 ]
@@ -27,6 +32,10 @@ HELP = (
     "Повторная ссылка — «уже есть»; слово «заново» — сделать ещё раз\n"
     "• Под конспектом: 🔁 Подробнее · ✅ Прочитано · 🗑 Удалить\n"
     "• /unread — непрочитанные конспекты (а по воскресеньям в 18:00 пришлю сам)\n"
+    "• Сайт Second Brain (режим api): /task задача до пятницы ! #dev · "
+    "/note идея (или /note неделя …) · /ask вопрос по заметкам · "
+    "/queue — что ждёт отправки · /retry — отправить сейчас. "
+    "Голосом: «добавь задачу …», «запиши в заметки …»\n"
     "• /new — напоминание: текст → время → повтор\n"
     "• Или сразу текстом: «через 2 минуты напомни про лимиты» — время пойму сам\n"
     "• /list — активные напоминания: изменить, удалить\n"

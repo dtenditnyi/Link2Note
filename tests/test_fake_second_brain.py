@@ -242,3 +242,61 @@ async def test_stop_start_same_port(srv, c):
     await srv.start()
     assert srv.port == port
     assert (await c.get("/health")).status_code == 200
+
+
+async def test_sibling_folder_is_not_inside_rights(c):
+    """Ревью A+B: «…Из ссылок2» начинается с имени папки бота, но в правах её нет."""
+    r = await create(c, folder=FOLDER + "2")
+    assert r.status_code == 403
+
+
+async def test_put_and_patch_check_write_rights(c, srv):
+    other = srv.root / "05 - Archive" / "x.md"
+    other.parent.mkdir(parents=True)
+    other.write_bytes(md().encode())
+    path = enc("05 - Archive/x.md")
+    sha = (await c.get(f"/notes/{path}")).json()["sha"]
+    r = await c.put(f"/notes/{path}", json={"content": md(body="new"), "if_sha": sha},
+                    headers=key(1))  # fmt: skip
+    assert r.status_code == 403
+    r = await c.patch(f"/notes/{path}/frontmatter", json={"set": {"status": "read"}},
+                      headers=key(2))  # fmt: skip
+    assert r.status_code == 403 and other.read_bytes() == md().encode()
+
+
+@pytest.mark.parametrize(
+    "bad", ["..%5C..%5C00 - Inbox%5Cx.md", "sub/.git/config", "a/.obsidian/x.md", "C:%5Cx.md"]
+)
+async def test_backslash_and_hidden_paths_rejected(c, srv, bad):
+    inbox = srv.root / "00 - Inbox" / "x.md"
+    inbox.parent.mkdir(parents=True)
+    inbox.write_text("---\na: b\n---\n", encoding="utf-8")
+    r = await c.delete(f"/notes/{enc(FOLDER)}/{bad}", headers=key(1))
+    assert r.status_code == 400 and inbox.exists()
+
+
+async def test_bad_json_is_400(c):
+    r = await c.post("/tasks", content=b"{not json", headers=key(1))
+    assert r.status_code == 400 and r.json()["error"]["code"] == "validation_error"
+    r = await c.post("/ask", content=b"{not json")
+    assert r.status_code == 400
+
+
+async def test_fingerprint_ignores_key_order(c, srv):
+    body = '{"text": "x", "target": "inbox"}'
+    swapped = '{"target": "inbox", "text": "x"}'
+    h = {**key(1), "Content-Type": "application/json"}
+    assert (await c.post("/capture", content=body, headers=h)).status_code == 201
+    assert (await c.post("/capture", content=swapped, headers=h)).status_code == 201
+    assert len(srv.captures) == 1
+
+
+async def test_patch_no_change_no_commit_and_validated(c, srv):
+    created = (await create(c)).json()
+    path = enc(created["path"])
+    r = await c.patch(f"/notes/{path}/frontmatter", json={"set": {"status": "unread"}},
+                      headers=key(2))  # fmt: skip
+    assert r.status_code == 200 and len(srv.writes) == 1
+    r = await c.patch(f"/notes/{path}/frontmatter", json={"set": {"status": "bogus"}},
+                      headers=key(3))  # fmt: skip
+    assert r.status_code == 422

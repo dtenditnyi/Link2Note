@@ -40,7 +40,7 @@ def dp(tmp_path_factory):
 
 def test_routers_order_context_last(dp):
     names = [r.name for r in dp.sub_routers]
-    assert names == ["basic", "reminders", "voice", "links", "notes", "context"]
+    assert names == ["basic", "brain", "reminders", "voice", "links", "notes", "context"]  # D8
 
 
 def test_workflow_data_injected(dp):

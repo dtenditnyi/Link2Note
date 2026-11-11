@@ -3,6 +3,7 @@
 Время хранится в UTC ISO-строкой — сортируется и сравнивается корректно.
 """
 
+import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -61,6 +62,28 @@ CREATE TABLE IF NOT EXISTS notes (
     read       INTEGER NOT NULL DEFAULT 0,
     created_at TEXT    NOT NULL
 );
+
+-- Этап 5: офлайн-очередь операций с сайтом Second Brain (outbox). Готовый Markdown лежит в
+-- payload — при повторе Gemini не вызывается. Операции одной группы (grp) — строго по id.
+CREATE TABLE IF NOT EXISTS vault_ops (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    op              TEXT    NOT NULL,      -- save|set_status|replace|delete|task|capture
+    grp             TEXT    NOT NULL,                  -- note:<normalize(url)>: порядок в группе
+    payload         TEXT    NOT NULL,                  -- JSON
+    idem_key        TEXT    NOT NULL UNIQUE,           -- Idempotency-Key, создаётся один раз
+    chat_id         INTEGER,                           -- сообщение Telegram, которое обновить
+    msg_id          INTEGER,
+    notify          TEXT,                              -- JSON: текст после отправки, note_id
+    status          TEXT    NOT NULL DEFAULT 'pending',  -- pending | done | dead
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at TEXT    NOT NULL,                  -- UTC
+    last_error      TEXT,
+    result          TEXT,                              -- JSON ответа сайта / вид ошибки
+    created_at      TEXT    NOT NULL,                  -- UTC
+    updated_at      TEXT    NOT NULL,                  -- UTC
+    retried_at      TEXT                               -- UTC: /retry — OUTBOX_MAX_AGE заново
+);
+CREATE INDEX IF NOT EXISTS idx_vault_ops_status ON vault_ops (status, grp, id);
 """
 _COLUMNS = "id, chat_id, task, remind_at, repeat, status"
 
@@ -88,6 +111,59 @@ class LinkJob:
     defers: int = 0
     quota_waits: int = 0
     note_id: int | None = None  # «Подробнее»: заменить эту заметку
+
+
+@dataclass(frozen=True, slots=True)
+class OpRow:
+    id: int
+    op: str
+    grp: str
+    payload: dict
+    idem_key: str
+    chat_id: int | None
+    msg_id: int | None
+    notify: dict | None
+    status: str
+    attempts: int
+    next_attempt_at: datetime  # aware, UTC
+    last_error: str | None
+    result: dict | None
+    created_at: datetime  # aware, UTC
+    updated_at: datetime
+    retried_at: datetime | None
+
+    @property
+    def started_at(self) -> datetime:
+        """От этого момента считается OUTBOX_MAX_AGE (/retry начинает отсчёт заново)."""
+        return self.retried_at or self.created_at
+
+
+_OP_COLUMNS = (
+    "id, op, grp, payload, idem_key, chat_id, msg_id, notify, status, attempts, "
+    "next_attempt_at, last_error, result, created_at, updated_at, retried_at"
+)
+_OP_JSON = {"payload", "notify", "result"}
+_OP_TIMES = {"next_attempt_at", "created_at", "updated_at", "retried_at"}
+_OP_UPDATABLE = {
+    "payload", "chat_id", "msg_id", "notify", "status", "attempts", "next_attempt_at",
+    "last_error", "result", "retried_at",
+}  # fmt: skip
+
+
+def _js(value: str | None):
+    return json.loads(value) if value else None
+
+
+def _ts(value: str | None) -> datetime | None:
+    return datetime.fromisoformat(value) if value else None
+
+
+def _op_row(r: tuple) -> OpRow:
+    return OpRow(
+        r[0], r[1], r[2], _js(r[3]) or {}, r[4], r[5], r[6], _js(r[7]), r[8], r[9],
+        datetime.fromisoformat(r[10]), r[11], _js(r[12]), datetime.fromisoformat(r[13]),
+        datetime.fromisoformat(r[14]), _ts(r[15]),
+    )  # fmt: skip
 
 
 @dataclass(frozen=True, slots=True)
@@ -446,3 +522,107 @@ class Database:
             )  # fmt: skip
             for r in rows
         ]
+
+    # --- Этап 5: офлайн-очередь операций с сайтом (vault_ops) ------------------------------
+
+    def add_op(
+        self,
+        op: str,
+        grp: str,
+        payload: dict,
+        idem_key: str,
+        now: datetime,
+        *,
+        chat_id: int | None = None,
+        msg_id: int | None = None,
+    ) -> int:
+        at = _to_db(now)
+        with self._conn() as c:
+            cur = c.execute(
+                "INSERT INTO vault_ops (op, grp, payload, idem_key, chat_id, msg_id, "
+                "next_attempt_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (op, grp, json.dumps(payload, ensure_ascii=False), idem_key, chat_id, msg_id,
+                 at, at, at),
+            )  # fmt: skip
+            assert cur.lastrowid is not None
+            return cur.lastrowid
+
+    def get_op(self, op_id: int) -> OpRow | None:
+        with self._conn() as c:
+            row = c.execute(
+                f"SELECT {_OP_COLUMNS} FROM vault_ops WHERE id = ?", (op_id,)
+            ).fetchone()
+        return _op_row(row) if row else None
+
+    def list_ops(self, statuses: tuple[str, ...] = ("pending", "dead")) -> list[OpRow]:
+        marks = ", ".join("?" * len(statuses))
+        with self._conn() as c:
+            rows = c.execute(
+                f"SELECT {_OP_COLUMNS} FROM vault_ops WHERE status IN ({marks}) ORDER BY id",
+                statuses,
+            ).fetchall()
+        return [_op_row(r) for r in rows]
+
+    def update_op(self, op_id: int, now: datetime, **fields) -> None:
+        unknown = set(fields) - _OP_UPDATABLE
+        if unknown:
+            raise ValueError(f"vault_ops: нельзя менять {unknown}")
+        values = []
+        for key, value in fields.items():
+            if key in _OP_JSON and value is not None:
+                value = json.dumps(value, ensure_ascii=False)
+            elif key in _OP_TIMES and value is not None:
+                value = _to_db(value)
+            values.append(value)
+        sets = ", ".join(f"{k} = ?" for k in fields)
+        with self._conn() as c:
+            c.execute(
+                f"UPDATE vault_ops SET {sets}, updated_at = ? WHERE id = ?",
+                (*values, _to_db(now), op_id),
+            )
+
+    def due_ops(self, now: datetime) -> list[OpRow]:
+        """pending, время пришло и в группе нет более ранней pending — по порядку id."""
+        with self._conn() as c:
+            rows = c.execute(
+                f"SELECT {_OP_COLUMNS} FROM vault_ops o WHERE status = 'pending' "
+                "AND next_attempt_at <= ? AND NOT EXISTS (SELECT 1 FROM vault_ops p "
+                "WHERE p.grp = o.grp AND p.status = 'pending' AND p.id < o.id) ORDER BY id",
+                (_to_db(now),),
+            ).fetchall()
+        return [_op_row(r) for r in rows]
+
+    def group_pending(self, grp: str, up_to: int) -> list[OpRow]:
+        """pending-операции группы по порядку, id <= up_to."""
+        with self._conn() as c:
+            rows = c.execute(
+                f"SELECT {_OP_COLUMNS} FROM vault_ops WHERE grp = ? AND status = 'pending' "
+                "AND id <= ? ORDER BY id",
+                (grp, up_to),
+            ).fetchall()
+        return [_op_row(r) for r in rows]
+
+    def next_op_due(self) -> datetime | None:
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT MIN(next_attempt_at) FROM vault_ops WHERE status = 'pending'"
+            ).fetchone()
+        return datetime.fromisoformat(row[0]) if row and row[0] else None
+
+    def count_ops(self) -> dict[str, int]:
+        with self._conn() as c:
+            rows = c.execute("SELECT status, COUNT(*) FROM vault_ops GROUP BY status").fetchall()
+        return {"pending": 0, "done": 0, "dead": 0} | dict(rows)
+
+    def rename_notes(self, old: str, new: str, url: str) -> None:
+        """Сайт выдал другое имя (« (2)»): строки notes/digests с желаемым именем → настоящее."""
+        with self._conn() as c:
+            ids = [
+                r[0]
+                for r in c.execute(
+                    "SELECT id FROM notes WHERE note_name = ? AND url = ?", (old, url)
+                ).fetchall()
+            ]
+            for note_id in ids:
+                c.execute("UPDATE notes SET note_name = ? WHERE id = ?", (new, note_id))
+                c.execute("UPDATE digests SET note_name = ? WHERE note_id = ?", (new, note_id))

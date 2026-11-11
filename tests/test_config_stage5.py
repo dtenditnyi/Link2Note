@@ -77,3 +77,34 @@ def test_env_bool_dry_run(monkeypatch):
     monkeypatch.setenv("OWNER_ID", "1")
     monkeypatch.setenv("DRY_RUN", "1")
     assert Settings(_env_file=None).dry_run is True
+
+
+def test_validation_error_never_shows_tokens(monkeypatch):
+    """Ревью A+B #1: pydantic печатал input_value (с токенами) в ошибке model_validator."""
+    monkeypatch.setenv("BOT_TOKEN", "123456:AAA-live-bot-secret")
+    monkeypatch.setenv("OWNER_ID", "1")
+    monkeypatch.setenv("VAULT_BACKEND", "api")
+    monkeypatch.setenv("SECOND_BRAIN_API_URL", "secondbrain-web:8000/api/v1")  # без http://
+    monkeypatch.setenv("SECOND_BRAIN_API_TOKEN", "sb-live-secret-0123456789")
+    with pytest.raises(ValidationError) as err:
+        Settings(_env_file=None)
+    text = str(err.value)
+    assert "sb-live-secret" not in text and "live-bot-secret" not in text
+
+
+def test_token_stripped_and_blank_rejected():
+    s = _s(vault_backend="api", second_brain_api_token="  sb-x \n")
+    assert s.second_brain_api_token.get_secret_value() == "sb-x"
+    with pytest.raises(ValidationError, match="SECOND_BRAIN_API_TOKEN"):
+        _s(vault_backend="api", second_brain_api_token="   ")
+
+
+@pytest.mark.parametrize("raw", ["0", "0d", 0])
+def test_outbox_max_age_zero_rejected(raw):
+    with pytest.raises(ValidationError, match="OUTBOX_MAX_AGE"):
+        _s(outbox_max_age=raw)
+
+
+def test_timeout_positive():
+    with pytest.raises(ValidationError, match="SECOND_BRAIN_TIMEOUT_S"):
+        _s(second_brain_timeout_s=0)
