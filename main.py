@@ -282,6 +282,8 @@ async def main() -> None:
             # После воркера: он мог успеть отложить задачу. Отложенные остаются в базе.
             postponer.close()
             await _stop(sender, heartbeat)  # ждущие операции сайта остаются в vault_ops
+            if outbox is not None:
+                await outbox.api.aclose()
 
 
 def run() -> None:

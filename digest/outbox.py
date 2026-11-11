@@ -152,7 +152,13 @@ class Outbox:
             raise KeyError(op_id)
         async with self._lock:
             for item in self.db.group_pending(op.grp, op_id):
-                if await self._execute(item, background=False) == "pending":
+                # Перечитать: выполненный выше save мог сменить имя в payload (сайт дал « (2)»).
+                fresh = self.db.get_op(item.id)
+                if fresh is None or fresh.status != "pending":
+                    continue
+                # О более ранней операции группы пользователь не спрашивал — её dead уведомляем.
+                status = await self._execute(fresh, background=fresh.id != op_id)
+                if status == "pending":
                     break  # сайт недоступен — дальше по группе не идём
         row = self.db.get_op(op_id)
         assert row is not None
@@ -215,6 +221,12 @@ class Outbox:
         except Exception as err:  # ошибка бота — не теряем операцию, повторим по расписанию
             log.exception("Outbox #%d %s: непредвиденная ошибка", op.id, op.op)
             attempts = op.attempts + 1
+            if attempts >= self.max_attempts:
+                await self._dead(
+                    op, f"{attempts} попыток: {err!r}"[:300], "attempts", background,
+                    attempts=attempts,
+                )  # fmt: skip
+                return "dead"
             at = now + timedelta(seconds=BACKOFF_S[min(attempts - 1, len(BACKOFF_S) - 1)])
             self.db.update_op(
                 op.id, now, attempts=attempts, next_attempt_at=at, last_error=repr(err)[:300]
@@ -347,7 +359,7 @@ class Outbox:
     def retry(self) -> int:
         """/retry: dead и отложенные — снова в работу сейчас; отсчёт попыток и возраста заново."""
         now = self._now()
-        ops = self.db.list_ops(("pending", "dead"))
+        ops = [op for op in self.db.list_ops(("pending", "dead")) if not self._superseded(op)]
         for op in ops:
             self.db.update_op(
                 op.id,
@@ -362,6 +374,15 @@ class Outbox:
             self._wake.set()
         return len(ops)
 
+    def _superseded(self, op: OpRow) -> bool:
+        """dead-операция, после которой в группе уже выполнено что-то ещё (порядок D5):
+        повтор сломал бы порядок — например, воскресил бы уже удалённую заметку."""
+        if op.status != "dead" or not op.grp.startswith("note:"):
+            return False
+        return any(
+            later.id > op.id and later.grp == op.grp for later in self.db.list_ops(("done",))
+        )
+
     def pending_names(self, grp: str) -> list[str]:
         """Имена заметок, чьё создание ещё ждёт в очереди (дубликат при выключенном сайте)."""
         return [
@@ -369,6 +390,13 @@ class Outbox:
             for op in self.db.list_ops(("pending",))
             if op.op == "save" and op.grp == grp and op.payload.get("name")
         ]
+
+    def pending_deletes(self, grp: str) -> set[str]:
+        return {
+            str(op.payload.get("name"))
+            for op in self.db.list_ops(("pending",))
+            if op.op == "delete" and op.grp == grp
+        }
 
     def wake(self) -> None:
         self._wake.set()
@@ -469,7 +497,10 @@ class QueuedVault:
         except VaultUnavailable as err:
             log.warning("Дубликаты: сайт недоступен (%s) — проверяю по локальной базе", err)
             return None
-        return names or self.outbox.pending_names(note_group(url))
+        grp = note_group(url)
+        deleting = self.outbox.pending_deletes(grp)
+        names = [n for n in names if n not in deleting]
+        return names or self.outbox.pending_names(grp)
 
     async def create_task(
         self, text: str, *, due: str | None, priority: str | None, tags: list[str]

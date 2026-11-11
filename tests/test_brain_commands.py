@@ -195,3 +195,66 @@ async def test_voice_routes_task_without_gemini(tmp_path):
     brain.create_task.assert_awaited_once_with(
         "купить молоко", due="2026-11-12", priority=None, tags=[]
     )
+
+
+# --- ревью C/D/E: HTML для Telegram ---------------------------------------------------
+
+
+def _valid(html: str) -> bool:
+    from services.tg_format import _balanced
+
+    return _balanced(html) and len(html) <= 4096
+
+
+def test_split_code_block_of_special_chars_keeps_everything():
+    """Блок из одних <>& раньше резался посередине тега/сущности и терял текст."""
+    raw = "<>&" * 6000
+    chunks = split_markdown(f"```\n{raw}\n```")
+    assert all(_valid(c) for c in chunks)
+    from html import unescape
+
+    text = "".join(unescape(c.removeprefix("<pre>").removesuffix("</pre>")) for c in chunks)
+    assert text == raw
+
+
+def test_link_with_quote_escaped():
+    html = md_to_html('[сайт](https://x.com/a"b)')
+    assert 'href="https://x.com/a&quot;b"' in html
+
+
+def test_no_italic_inside_bare_url():
+    assert md_to_html("см. https://ex.com/_x_/y и _курсив_") == (
+        "см. https://ex.com/_x_/y и <i>курсив</i>"
+    )
+
+
+def test_crossed_markup_falls_back_to_plain_text():
+    html = md_to_html("**a *b** c*")
+    assert _valid(html) and "<b>" not in html
+
+
+async def test_ask_falls_back_to_plain_text_on_telegram_error():
+    from aiogram.exceptions import TelegramBadRequest
+
+    brain = _brain(return_value={"answer_markdown": "**ok**", "sources": []})
+    msg = make_message("/ask")
+    msg.answer = AsyncMock(side_effect=[TelegramBadRequest(MagicMock(), "can't parse"), None])
+    await cmd_ask(msg, _cmd("ask", "?"), brain=brain)
+    last = msg.answer.await_args_list[-1]
+    assert last.args[0] == "ok" and last.kwargs.get("parse_mode") is None
+
+
+@pytest.mark.parametrize(
+    ("raw", "text", "due"),
+    [
+        ("обновить python 3.12", "обновить python 3.12", None),
+        ("прочитать 2.5 главы", "прочитать 2.5 главы", None),
+        ("настроить среду разработки", "настроить среду разработки", None),
+        ("сдать отчёт 20.11.2026", "сдать отчёт", date(2026, 11, 20)),
+        ("сдать отчёт по пятницу", "сдать отчёт", date(2026, 11, 13)),
+    ],
+)
+def test_parse_task_no_false_dates(raw, text, due):
+    """Ревью C/D/E #4: числа и дни недели без предлога — не срок."""
+    d = parse_task(raw, WED)
+    assert (d.text, d.due) == (text, due)

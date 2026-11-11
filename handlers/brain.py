@@ -5,11 +5,13 @@
 """
 
 import logging
+import re
 from collections.abc import Callable
 from datetime import UTC, datetime
-from html import escape
+from html import escape, unescape
 
 from aiogram import Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
 
@@ -150,7 +152,12 @@ async def cmd_ask(
         else:
             chunks.append(line)
     for chunk in chunks:
-        await message.answer(chunk, disable_web_page_preview=True)
+        try:
+            await message.answer(chunk, disable_web_page_preview=True)
+        except TelegramBadRequest:  # Telegram не разобрал HTML — тот же текст без разметки
+            log.warning("/ask: Telegram не принял HTML, шлю простым текстом")
+            plain = unescape(re.sub(r"<[^>]+>", "", chunk))
+            await message.answer(plain, parse_mode=None, disable_web_page_preview=True)
 
 
 def _when(at: datetime, tz) -> str:

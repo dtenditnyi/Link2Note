@@ -29,3 +29,6 @@ GOALS.md (26 целей), DECISIONS D1–D12, `tests/acceptance/test_stage5.py`:
 
 ### 2026-11-11 — G-F1…F5, G-G1 — сервер и живая проверка
 compose (сеть `secondbrain`, ротация логов, URL сайта из имени контейнера), `deploy/*.sh`, systemd, `digest/admin.py`, `docs/DEPLOY.md`, `scripts/check_second_brain_api.py` (15 проверок, прогнан против фейка + негативный тест). F5 вживую в Docker Desktop — `F5-docker-check.md`; найден и исправлен B04 (SIGTERM). Полный набор: 836 passed.
+
+### 2026-11-11 — ревью C/D/E — 8 находок исправлено
+B05 (HIGH, чужая заметка при « (2)»), B06 (`/ask` HTML), даты `/task`, `/retry` и порядок, max_attempts для ошибок бота, дубликат при ждущем удалении, `aclose`. Закрыты выжившие мутации (g, h, c2, b). Отчёт — REVIEW-CDE.md.

@@ -19,6 +19,7 @@ from urllib.parse import quote
 import httpx
 from pydantic import SecretStr
 
+from digest.classifier import normalize
 from digest.errors import NoteAmbiguous, NoteNotFound, VaultRejected, VaultUnavailable
 from digest.vault import frontmatter, safe_filename
 from digest.vault_base import UnreadNote
@@ -156,9 +157,14 @@ class ApiVault:
     async def _locate(self, name: str, url: str, skip: Collection[str]) -> dict[str, Any]:
         """Своя папка по имени; иначе — единственная заметка-конспект с этим url (как GitVault)."""
         try:
-            return await self._get(self._path(name))
+            note = await self._get(self._path(name))
         except NoteNotFound:
             pass
+        else:
+            note_url = (note.get("frontmatter") or {}).get("url") or ""
+            if not note_url or not url or normalize(note_url) == normalize(url):
+                return note
+            log.warning("«%s» на сайте — другая ссылка; ищу заметку по url", name)
         found = [i for i in await self._lookup(url) if i.get("name") not in skip]
         if len(found) == 1:
             return await self._get(found[0]["path"])

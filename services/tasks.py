@@ -25,9 +25,13 @@ _DAYS = {"сегодня": 0, "завтра": 1, "послезавтра": 2}
 _NB = r"(?![а-яё\w])"
 _PRE = r"(?:(?:до|к|в|во|на)\s+)?"
 _DAY_RE = re.compile(rf"(?<![а-яё\w]){_PRE}({'|'.join(_DAYS)}){_NB}", re.I)
-_WEEKDAY_RE = re.compile(rf"(?<![а-яё\w]){_PRE}({'|'.join(_WEEKDAYS)}){_NB}", re.I)
+# День недели и «15.11» — срок только с предлогом («до пятницы», «в среду», «к 15.11»):
+# иначе «настроить среду разработки» и «python 3.12» стали бы сроками. С годом — и без предлога.
+_WEEKDAY_RE = re.compile(rf"(?<![а-яё\w])(?:до|к|в|во|на|по)\s+({'|'.join(_WEEKDAYS)}){_NB}", re.I)
 _DATE_RE = re.compile(
-    r"(?<![\w.])(?:(?:до|к)\s+)?(\d{1,2})\.(\d{1,2})(?:\.(\d{2,4}))?(?![\w.])", re.I
+    r"(?<![\w.])(?:(?:до|к|на)\s+(\d{1,2})\.(\d{1,2})(?:\.(\d{2,4}))?"
+    r"|(\d{1,2})\.(\d{1,2})\.(\d{4}))(?![\w.])",
+    re.I,
 )
 _TAG_RE = re.compile(r"(?<![\w#])#([\w-]+)")
 _PRIORITY_RE = re.compile(r"(?<!\S)!{1,3}(?!\S)")
@@ -47,7 +51,9 @@ def _cut(text: str, m: re.Match) -> str:
 
 
 def _date_from(m: re.Match, today: date) -> date | None:
-    day, month, year = int(m.group(1)), int(m.group(2)), m.group(3)
+    g = m.groups()
+    day_s, month_s, year = (g[0], g[1], g[2]) if g[0] else (g[3], g[4], g[5])
+    day, month = int(day_s), int(month_s)
     y = int(year) + (2000 if year and len(year) == 2 else 0) if year else today.year
     try:
         due = date(y, month, day)

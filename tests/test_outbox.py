@@ -327,3 +327,113 @@ def test_describe_and_group():
     assert describe(row("capture", target="weekly")) == "запись в недельную заметку"
     assert note_group("https://youtu.be/dQw4w9WgXcQ?si=1") == note_group(CANON)
     assert note_group("", "Имя") == "note:name:Имя"
+
+
+# --- ревью C/D/E ------------------------------------------------------------------------
+
+
+def test_backoff_schedule_matches_spec():
+    """Мутация (c2) выживала: расписание сверяем со спецификацией, а не с самим модулем."""
+    assert BACKOFF_S == (30, 60, 300, 900, 3600)
+
+
+async def test_attempt_uses_site_name_for_later_ops_no_foreign_delete(stack, srv, db, clock):
+    """#1: save получил « (2)» внутри attempt — delete не должен удалить чужую заметку."""
+    vault, outbox, _ = stack
+    await vault.save("Хоткеи", md(url="https://other.com/a"), DAY)  # чужая, занимает имя
+    await srv.stop()
+    with pytest.raises(VaultQueued):
+        await vault.save("Хоткеи", md(), DAY)
+    with pytest.raises(VaultQueued):
+        await vault.delete("2026-11-11 Хоткеи", CANON)
+    await srv.start()
+    # Ещё одно нажатие той же заметки → attempt по группе: save « (2)», delete « (2)»,
+    # а «Прочитано» уже удалённой заметки — честное «не нашёл».
+    with pytest.raises(NoteNotFound):
+        await vault.set_status("2026-11-11 Хоткеи", CANON, "read")
+    await outbox.run_due()
+    assert list(notes(srv)) == [f"{FOLDER}/2026-11-11 Хоткеи.md"]
+    assert "other.com" in notes(srv)[f"{FOLDER}/2026-11-11 Хоткеи.md"]
+
+
+async def test_locate_by_name_checks_url(stack, srv):
+    """#1, вторая линия: заметка с тем же именем, но другой ссылкой — не наша."""
+    vault, _, _ = stack
+    await vault.save("Хоткеи", md(url="https://other.com/a"), DAY)
+    with pytest.raises(NoteNotFound):
+        await vault.delete("2026-11-11 Хоткеи", CANON)
+    assert len(notes(srv)) == 1
+
+
+async def test_earlier_group_op_dead_in_attempt_notifies(stack, srv, db, clock):
+    """#2: save умер во время нажатия «Прочитано» — владелец узнаёт, сообщение «📮» обновлено."""
+    vault, outbox, bot = stack
+    await srv.stop()
+    with pytest.raises(VaultQueued):
+        await vault.save("Хоткеи", md(), DAY)
+    await srv.start()
+    srv.fail("422", method="POST")
+    with pytest.raises(NoteNotFound):
+        await vault.set_status("2026-11-11 Хоткеи", CANON, "read")
+    bot.send_message.assert_awaited_once()
+    assert "«2026-11-11 Хоткеи»" in bot.send_message.await_args.kwargs["text"]
+
+
+async def test_retry_does_not_revive_superseded_dead_save(stack, srv, db, clock):
+    """#5: save dead, а delete той же заметки уже выполнен — /retry не воскрешает заметку."""
+    vault, outbox, _ = stack
+    srv.fail("422", method="POST")
+    with pytest.raises(VaultRejected):
+        await vault.save("Хоткеи", md(), DAY)
+    with pytest.raises(NoteNotFound):  # заметки нет — delete «выполнен»
+        await vault.delete("2026-11-11 Хоткеи", CANON)
+    assert outbox.retry() == 0
+    await outbox.run_due()
+    assert notes(srv) == {}
+
+
+async def test_unexpected_errors_limited_by_max_attempts(stack, db, clock, monkeypatch):
+    """#6: ошибка бота повторяется не бесконечно (до OUTBOX_MAX_AGE), а до max_attempts."""
+    vault, outbox, bot = stack
+
+    async def boom(op):
+        raise RuntimeError("bug")
+
+    monkeypatch.setitem(outbox._handlers, "capture", boom)
+    with pytest.raises(VaultQueued) as err:
+        await vault.capture("x", "inbox")
+    for _ in range(10):
+        clock.advance(hours=2)
+        await outbox.run_due()
+    op = db.get_op(err.value.op_id)
+    assert op.status == "dead" and op.attempts == 5
+    bot.send_message.assert_awaited_once()
+
+
+async def test_pending_delete_is_not_duplicate(stack, srv):
+    """#7: ссылка пришла снова, пока удаление ждёт в очереди — это не «♻️ Уже есть»."""
+    vault, _, _ = stack
+    await vault.save("Хоткеи", md(), DAY)
+    srv.fail("503", method="DELETE")
+    with pytest.raises(VaultQueued):
+        await vault.delete("2026-11-11 Хоткеи", CANON)
+    assert await vault.find_by_url(CANON) == []
+
+
+async def test_drop_after_write_retries_with_same_key(stack, srv, db, clock):
+    """Мутация (b): новый ключ на попытку дал бы дубль — детерминированная проверка."""
+    vault, outbox, _ = stack
+    srv.fail("drop", method="POST")
+    with pytest.raises(VaultQueued):
+        await vault.save("Хоткеи", md(), DAY)
+    clock.advance(minutes=1)
+    await outbox.run_due()
+    assert list(notes(srv)) == [f"{FOLDER}/2026-11-11 Хоткеи.md"]
+
+
+async def test_already_read_sends_no_patch(stack, srv):
+    """Мутация (g): статус уже нужный — PATCH не отправляется вовсе."""
+    vault, _, _ = stack
+    await vault.save("Хоткеи", md().replace("status: unread", "status: read"), DAY)
+    await vault.set_status("2026-11-11 Хоткеи", CANON, "read")
+    assert not [r for r in srv.requests if r["method"] == "PATCH"]
