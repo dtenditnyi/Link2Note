@@ -18,14 +18,19 @@ Python 3.12, uv, aiogram 3, APScheduler, SQLite, google-genai, yt-dlp, trafilatu
 - Конспект без Telegram: `uv run python -m digest.cli <url> [--hint "…"] [--save]` — любой источник (YouTube, Reels, TikTok, X, статья); живой вызов Gemini (и запасной путь через Whisper), дубликаты не проверяет; `--save` — commit+push в `VAULT_REPO`
 - Типы: `~/.local/bin/pyright.exe --pythonpath .venv/Scripts/python.exe <файлы>` (до этапа 1 в старом коде ~38 ошибок — смотри только свои файлы)
 - Ручная проверка vault — только `../vault-test` (`remote.git` + `clone`), настоящий myObsidian не трогать
-- Docker: `docker compose build && docker compose up -d`
+- Docker: `docker compose build && docker compose up -d`; сервер — `./deploy/install.sh`, `status.sh`, `update.sh`, `backup.sh`, `restore.sh` (пошагово: docs/DEPLOY.md)
+- Очередь сайта и бэкап без Telegram: `uv run python -m digest.admin [--db …] queue|backup <файл.gz>|api-health`
+- Живая проверка API сайта (только владелец, песочница): `uv run python scripts/check_second_brain_api.py` (URL и токен — из переменных окружения)
 
 ## Правила
 - Часовой пояс Europe/Bucharest, бот на русском.
 - Работаем по этапам из docs/PLAN.md. Не делать функционал следующих этапов без запроса.
 - Весь код конспектов — в `digest/`, логика без Telegram (время, LLM-разбор, Whisper) — в `services/`, Telegram-хендлеры — в `handlers/`, клавиатуры и callback-данные — в `handlers/keyboards.py`.
-- Роутеры подключаются в `main.build_dispatcher` в порядке basic → reminders → voice → links → notes → context; `context` — всегда последним.
-- Кнопки под конспектом (`NoteCb`, таблица `notes`): правда о «прочитано» — frontmatter файла, не БД. Заметки меняет только `Vault` (`set_status`/`replace`/`delete`, под `Vault.lock`); заметку ищем по имени, иначе по `url:` во frontmatter.
+- Роутеры подключаются в `main.build_dispatcher` в порядке basic → brain → reminders → voice → links → notes → context; `brain` (команды сайта) — до ссылок, `context` — всегда последним.
+- Кнопки под конспектом (`NoteCb`, таблица `notes`): правда о «прочитано» — frontmatter файла, не БД. Заметки меняет только хранилище (`VaultBackend` из `digest/vault_base.py`: `GitVault` или `QueuedVault`); заметку ищем по имени, иначе по `url:` во frontmatter.
+- Хранилище — `VAULT_BACKEND=git|api` (`main.build_vault`). В режиме api каждая запись идёт через офлайн-очередь `vault_ops` (`digest/outbox.py`): готовый Markdown в payload (Gemini повторно не зовём), `Idempotency-Key` создаётся один раз при постановке, операции одной заметки (группа `note:<normalize(url)>`) — строго по порядку, недоступен → повтор 30 с…1 ч, 403/422 → `dead` без повторов. `ApiVault` — только HTTP по контракту `docs/SECOND_BRAIN_API_CONTRACT.md`; токен не логировать. Контракт меняется — правь и фейк `tests/fakes/second_brain.py`, и `contract/*.json`.
+- Команды сайта (`handlers/brain.py`): `/task`, `/note`, `/ask`, `/queue`, `/retry`; в режиме git отвечают «нужен VAULT_BACKEND=api». Новые переменные этапа 5: `VAULT_BACKEND`, `SECOND_BRAIN_API_URL`, `SECOND_BRAIN_API_TOKEN`, `SECOND_BRAIN_TIMEOUT_S`, `OUTBOX_MAX_AGE`, `OUTBOX_MAX_ATTEMPTS`, `GEMINI_DETAIL_MODEL`, `DRY_RUN` (список и смысл — docs/DEPLOY.md).
+- Тесты не ходят в сеть: autouse-фикстура `_no_internet` (только localhost); API сайта — фейк на aiohttp.
 - Whisper-путь конспекта — только при `VideoUnreadable` (Gemini не открыл видео), никогда при 429/503/дневной квоте: конспект по расшифровке тоже тратит запрос Gemini.
 - Схема ответа Gemini (`digest/schema.py`): необязательные поля — только `Field(default_factory=…)`, не `= ""`: литеральный `default` уходит в запрос к Gemini (тест L4 это ловит).
 - Время в БД — UTC; всё время в коде — aware datetime; часовой пояс только из `config.py`.

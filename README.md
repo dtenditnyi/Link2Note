@@ -13,8 +13,15 @@ uv run pytest -q
 uv run python main.py
 ```
 
-## Docker
+## Сервер (Docker)
+Пошагово — [docs/DEPLOY.md](docs/DEPLOY.md): `.env`, `./deploy/install.sh`, обновление, бэкапы, переключение на API сайта Second Brain.
 ```bash
-mkdir -p data && sudo chown 1000:1000 data   # только на Linux-хосте
-docker compose build && docker compose up -d
+./deploy/install.sh     # первая установка (Docker, папки, сеть, systemd)
+./deploy/status.sh      # состояние, очередь сайта, бэкапы
+./deploy/update.sh      # обновление с откатом
 ```
+
+## Second Brain
+Режим `VAULT_BACKEND=api`: заметки пишет сайт Second Brain, бот шлёт готовый Markdown через офлайн-очередь.
+Контракт API для сайта — [docs/SECOND_BRAIN_API_CONTRACT.md](docs/SECOND_BRAIN_API_CONTRACT.md), общие файлы — `contract/`.
+Команды: `/task`, `/note`, `/ask`, `/queue`, `/retry`.

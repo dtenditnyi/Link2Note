@@ -300,3 +300,19 @@ async def test_patch_no_change_no_commit_and_validated(c, srv):
     r = await c.patch(f"/notes/{path}/frontmatter", json={"set": {"status": "bogus"}},
                       headers=key(3))  # fmt: skip
     assert r.status_code == 422
+
+
+async def test_live_check_script_detects_broken_site(srv, monkeypatch, capsys):
+    """Скрипт живой проверки действительно ловит нарушения: сайт без проверки тегов → ❌."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "check_api", ROOT / "scripts/check_second_brain_api.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    monkeypatch.setenv("SECOND_BRAIN_API_URL", srv.url)
+    monkeypatch.setenv("SECOND_BRAIN_API_TOKEN", srv.token)
+    srv.allowed_tags = srv.allowed_tags | {"hacking"}
+    assert await mod.run() == 1
+    assert "❌ 422 на недопустимый тег" in capsys.readouterr().out

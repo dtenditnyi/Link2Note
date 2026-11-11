@@ -26,3 +26,7 @@ graphify-out/
 # OS / IDE
 .DS_Store
 Thumbs.db
+
+# Сервер: бэкапы и логи deploy-скриптов
+backups/
+deploy/logs/

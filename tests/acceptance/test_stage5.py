@@ -426,7 +426,6 @@ def test_ge1_detail_model():
 # --- Часть F ------------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(strict=True, reason="S5 G-F1")
 def test_gf1_compose():
     import yaml
 
@@ -451,7 +450,6 @@ def test_gf2_heartbeat(tmp_path):
     assert "HEALTHCHECK" in (ROOT / "Dockerfile").read_text(encoding="utf-8")
 
 
-@pytest.mark.xfail(strict=True, reason="S5 G-F3")
 def test_gf3_deploy_scripts():
     for name in ("install.sh", "update.sh", "backup.sh", "restore.sh", "status.sh"):
         text = (ROOT / "deploy" / name).read_text(encoding="utf-8")
@@ -462,7 +460,6 @@ def test_gf3_deploy_scripts():
     assert (ROOT / "deploy/systemd/link2note.service").exists()
 
 
-@pytest.mark.xfail(strict=True, reason="S5 G-F3")
 def test_gf3_admin_backup_and_queue(tmp_path, db, capsys):
     import sqlite3
 
@@ -477,7 +474,6 @@ def test_gf3_admin_backup_and_queue(tmp_path, db, capsys):
     assert "pending: 0" in capsys.readouterr().out
 
 
-@pytest.mark.xfail(strict=True, reason="S5 G-F4")
 def test_gf4_deploy_doc():
     from config import Settings
 
@@ -515,7 +511,6 @@ async def test_gf5_dry_run_starts_without_telegram(tmp_path, monkeypatch):
 # --- Часть G ------------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(strict=True, reason="S5 G-G1")
 async def test_gg1_live_check_script_against_fake(srv, monkeypatch, capsys):
     import importlib.util
 

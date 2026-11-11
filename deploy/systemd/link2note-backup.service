@@ -1,0 +1,9 @@
+[Unit]
+Description=Link2Note: online SQLite backup
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=@APP_DIR@
+ExecStart=@APP_DIR@/deploy/backup.sh
