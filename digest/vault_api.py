@@ -55,9 +55,12 @@ def _retry_after(resp: httpx.Response) -> float | None:
 
 def _error(resp: httpx.Response) -> tuple[str, str, bool | None]:
     try:
-        err = resp.json().get("error") or {}
+        body = resp.json()
     except ValueError:
-        err = {}
+        body = None
+    err = body.get("error") if isinstance(body, dict) else None
+    if not isinstance(err, dict):
+        err = {"message": str(err)} if err else {}
     code = str(err.get("code") or resp.status_code)
     message = str(err.get("message") or resp.reason_phrase or "")[:_MAX_MESSAGE]
     retryable = err.get("retryable")
@@ -130,8 +133,10 @@ class ApiVault:
         status = resp.status_code
         if status == 409 and code == "conflict":
             raise _Conflict(f"Сайт Second Brain: конфликт версий ({text})")
-        if status == 404:
+        if status == 404 and path.startswith("/notes/"):
             raise NoteNotFound(f"На сайте нет заметки ({text})")
+        if status == 404:  # /notes, /tasks, /health… — адрес API неверный или прокси не готов
+            raise VaultUnavailable(f"Сайт Second Brain: адрес не найден ({text})")
         if status == 429 or status >= 500 or (status == 409 and retryable):
             raise VaultUnavailable(
                 f"Сайт Second Brain временно недоступен ({text})", retry_after=_retry_after(resp)

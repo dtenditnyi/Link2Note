@@ -67,7 +67,7 @@ class Settings(BaseSettings):
     second_brain_api_token: SecretStr = SecretStr("")
     second_brain_timeout_s: float = 15
     outbox_max_age: timedelta = timedelta(days=7)  # «7d», «12h», «30m» или число дней
-    outbox_max_attempts: int = 30
+    outbox_max_attempts: int = 200  # ~7 суток ежечасных повторов
 
     # Без Telegram: проверка контейнера (healthcheck, очередь, база) с фиктивным токеном.
     dry_run: bool = False

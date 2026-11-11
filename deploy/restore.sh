@@ -42,6 +42,7 @@ as_root chown "$APP_UID:$APP_UID" "$db" 2>/dev/null || true
 as_root chmod 600 "$db" 2>/dev/null || true
 ok "База восстановлена из $src"
 
+as_root rm -f "$DATA_DIR/heartbeat"
 compose up -d "$SERVICE"
 wait_healthy || die "Бот не стал healthy после восстановления — docker compose logs bot"
 ok "Готово"

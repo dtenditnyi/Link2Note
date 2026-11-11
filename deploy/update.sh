@@ -22,7 +22,8 @@ if docker image inspect link2note:latest >/dev/null 2>&1; then
 fi
 
 info "Собираю новый образ…"
-if compose build && compose up -d && wait_healthy; then
+# heartbeat удаляем прямо перед заменой контейнера: healthy — только по свежему файлу нового.
+if compose build && as_root rm -f "$DATA_DIR/heartbeat" && compose up -d && wait_healthy; then
     ok "Обновление готово: $after"
     exit 0
 fi
@@ -31,6 +32,7 @@ warn "Новая версия не поднялась"
 if [ "$had_image" -eq 1 ]; then
     warn "Откатываюсь на предыдущий образ…"
     docker image tag link2note:rollback link2note:latest
+    as_root rm -f "$DATA_DIR/heartbeat"
     compose up -d --no-build --force-recreate
     if wait_healthy; then
         die "Откатился на предыдущий образ (код остался $after — разберись: docker compose logs bot; git checkout $before)"

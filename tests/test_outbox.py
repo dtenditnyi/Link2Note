@@ -437,3 +437,22 @@ async def test_already_read_sends_no_patch(stack, srv):
     await vault.save("Хоткеи", md().replace("status: unread", "status: read"), DAY)
     await vault.set_status("2026-11-11 Хоткеи", CANON, "read")
     assert not [r for r in srv.requests if r["method"] == "PATCH"]
+
+
+async def test_background_loop_skips_op_being_sent_by_press(stack, srv, db, clock):
+    """Финальная проверка #3: фон не берёт операцию, которую сейчас отправляет нажатие."""
+    vault, outbox, bot = stack
+    op_id = outbox.enqueue("capture", {"text": "x", "target": "inbox"}, grp="capture:1")
+    outbox._claimed.add(op_id)
+    assert await outbox.run_due() == 0
+    outbox._claimed.discard(op_id)
+    assert await outbox.run_due() == 1
+
+
+def test_default_attempts_cover_max_age():
+    """Финальная проверка #1: при умолчаниях операция ждёт сайт ~OUTBOX_MAX_AGE, а не сутки."""
+    from config import Settings
+
+    s = Settings(_env_file=None, bot_token="1:x", owner_id=1)
+    waited = sum(BACKOFF_S) + (s.outbox_max_attempts - len(BACKOFF_S)) * BACKOFF_S[-1]
+    assert waited >= s.outbox_max_age.total_seconds()

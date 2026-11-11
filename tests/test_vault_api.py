@@ -265,3 +265,26 @@ async def test_mock_transport_http_date_retry_after():
         await api.unread()
     assert err.value.retry_after is None
     await client.aclose()
+
+
+@pytest.mark.parametrize("body", ['{"error": "boom"}', "[1, 2]", '"text"', "<html>"])
+async def test_non_contract_error_bodies_are_vault_errors(body):
+    """Финальная проверка #2: тело ошибки не по контракту — всё равно VaultRejected."""
+
+    def handler(request):
+        return httpx.Response(403, text=body)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    api = ApiVault("http://sb/api/v1", "t", FOLDER, client=client)
+    with pytest.raises(VaultRejected, match="403"):
+        await api.save("x", md(), DAY)
+    await client.aclose()
+
+
+async def test_404_outside_note_path_is_unavailable():
+    """Финальная проверка #6: 404 на POST /notes — неверный адрес, повторяем, а не dead."""
+    client = httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(404)))
+    api = ApiVault("http://sb/wrong", "t", FOLDER, client=client)
+    with pytest.raises(VaultUnavailable, match="адрес не найден"):
+        await api.save("x", md(), DAY)
+    await client.aclose()

@@ -89,7 +89,7 @@ class Outbox:
         owner_id: int | None = None,
         clock: Callable[[], datetime] = _utc_now,
         max_age: timedelta = timedelta(days=7),
-        max_attempts: int = 30,
+        max_attempts: int = 200,
     ):
         self.db = db
         self.api = api
@@ -100,6 +100,7 @@ class Outbox:
         self.max_attempts = max_attempts
         self._lock = asyncio.Lock()
         self._wake = asyncio.Event()
+        self._claimed: set[int] = set()  # отправляет attempt() — фон их не берёт
         self._handlers: dict[str, Callable[[OpRow], Awaitable[dict[str, Any]]]] = {
             "save": self._save,
             "set_status": self._set_status,
@@ -177,7 +178,7 @@ class Outbox:
                 progressed = False
                 for op in due:
                     current = self.db.get_op(op.id)
-                    if current is None or current.status != "pending":
+                    if current is None or current.status != "pending" or op.id in self._claimed:
                         continue
                     if await self._execute(current, background=True) != "pending":
                         finished += 1
@@ -439,7 +440,11 @@ class QueuedVault:
         self, op: str, payload: dict[str, Any], grp: str, queued: str, name: str | None
     ) -> dict[str, Any]:
         op_id = self.outbox.enqueue(op, payload, grp=grp)
-        row = await self.outbox.attempt(op_id)
+        self.outbox._claimed.add(op_id)
+        try:
+            row = await self.outbox.attempt(op_id)
+        finally:
+            self.outbox._claimed.discard(op_id)
         if row.status == "done":
             return row.result or {}
         if row.status == "dead":

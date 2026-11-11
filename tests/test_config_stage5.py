@@ -18,7 +18,7 @@ def test_defaults_git_backend():
     assert s.second_brain_api_url == "http://secondbrain-web:8000/api/v1"
     assert s.second_brain_timeout_s == 15
     assert s.outbox_max_age == timedelta(days=7)
-    assert s.outbox_max_attempts == 30
+    assert s.outbox_max_attempts == 200  # ~7 суток ежечасных повторов (финальная проверка)
     assert s.gemini_detail_model == "gemini-3.8-flash"
     assert s.dry_run is False
 

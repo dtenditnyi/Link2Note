@@ -275,7 +275,7 @@ async def test_gc3_rejected_is_dead_and_owner_notified(db, srv):
     with pytest.raises(VaultRejected):
         await vault.save("Хоткеи", _md(), date(2026, 11, 11))
     [op] = db.list_ops(("dead",))
-    assert op.attempts == 1 and "422" in op.last_error or "validation" in op.last_error
+    assert op.attempts == 1 and ("422" in op.last_error or "validation" in op.last_error)
     assert outbox.retry() == 1
     assert await outbox.run_due() == 1
     assert len(_digest_notes(srv)) == 1
@@ -553,10 +553,11 @@ async def _e2e(db, srv, tmp_path, *, restart: bool):
     outbox.clock = lambda: NOW + timedelta(minutes=1)
     assert await outbox.run_due() == 1
     [path] = _digest_notes(srv)
-    if not restart:  # «📮» в статус-сообщении заменился итоговым текстом с кнопками
-        final = bot.edit_message_text.await_args.kwargs
-        assert "📮" not in final["text"] and "📝 Заметка" in final["text"]
-        assert final["reply_markup"] is not None
+    # «📮» в статус-сообщении заменился итоговым текстом с кнопками (после перезапуска — тоже:
+    # привязка сообщения хранится в базе, правит новый бот).
+    final = bot.edit_message_text.await_args.kwargs
+    assert "📮" not in final["text"] and "📝 Заметка" in final["text"]
+    assert final["reply_markup"] is not None
     note = db.find_note(["youtube:dQw4w9WgXcQ"])
     assert note is not None
 
